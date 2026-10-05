@@ -8,6 +8,7 @@ import pytest
 from trace_sizing import Params, calculate, from_dict, load, scaling_table
 from trace_sizing.cli import main
 from trace_sizing.model import GB, KB, MB, TB
+from trace_sizing.html_report import full_html
 from trace_sizing.report import params_md
 
 ROOT = Path(__file__).parent.parent
@@ -250,3 +251,28 @@ def test_cli_shows_params_with_overrides_by_default(capsys):
 def test_cli_no_params_hides_section(capsys):
     assert main(["--scale", "none", "--no-params"]) == 0
     assert "## Parameters used" not in capsys.readouterr().out
+
+
+def test_full_html_well_formed_and_matches_md_numbers(r):
+    out = full_html(Params(), r)
+    assert out.startswith("<!doctype html>")
+    assert out.count("<table>") == out.count("</table>")
+    assert out.count("<section>") == out.count("</section>")
+    assert "<h1>TRACE sizing report</h1>" in out
+    assert ">FITS<" in out                      # VM fit badge
+    assert "<td>16.67 msg/s</td>" in out         # same number as the md report
+    assert "<td>96 GB</td>" in out                # Bronze HSI == raw HSI
+
+
+def test_full_html_escapes_vm_names():
+    p = from_dict({"vms": [{"name": "<script>alert(1)</script>", "vcpu": 1, "ram_gib": 1, "disk_gb": 1}]})
+    out = full_html(p, calculate(p))
+    assert "<script>alert(1)</script>" not in out
+    assert "&lt;script&gt;" in out
+
+
+def test_cli_html_format(capsys):
+    assert main(["--format", "html", "--scale", "none"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("<!doctype html>")
+    assert "## Parameters used" not in out        # that's the md section marker, not html's

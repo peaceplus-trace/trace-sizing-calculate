@@ -17,7 +17,9 @@ settings), and it calculates:
 
 Every run also prints a **Parameters used** section with every resolved input value — the
 TOML file plus any `--set` overrides — so a report states exactly what it was computed from
-(`--no-params` to hide it).
+(`--no-params` to hide it). Output is Markdown by default; `--format html` renders the same
+report as a single, dependency-free HTML page (light/dark, usage-percentage bars, collapsible
+parameters) you can open directly or send to someone.
 
 These map onto the three branches off the single streaming backbone: **Monitoring & Alerting**
 (Kafka → Flink → Prometheus → Grafana → paging), **Real-time Inference** (Kafka → Flink →
@@ -49,14 +51,21 @@ You can also run it without installing:
 PYTHONPATH=src python3 -m trace_sizing config/trace_workload.toml
 ```
 
+For a report you can open in a browser or send to someone:
+
+```bash
+trace-sizing config/trace_workload.toml --format html -o report.html
+```
+
 Common options:
 
 | Option | Effect |
 |---|---|
 | `--set iot.pilot_sites=5` | Override one parameter (repeatable) |
 | `--scale 0.5,1,2,10` | Scale factors for the scaling table (`none` to skip it) |
+| `--format html` | Single self-contained HTML page (light/dark, collapsible params, usage bars) |
 | `--format json` | Machine-readable output (params + result + scaling) |
-| `--no-params` | Hide the "Parameters used" section (md output shows it by default) |
+| `--no-params` | Hide the "Parameters used" section (md/html only; json always includes params) |
 | `-o report.md` | Write to a file |
 
 Example: what changes if HSI runs at 3 sites with 100 MB cubes, 20 samples/day?

@@ -86,6 +86,40 @@ def workload_md(p: Params, r: Result) -> str:
     return "\n".join(lines)
 
 
+def lakehouse_md(r: Result) -> str:
+    lh, ml = r.workload.lakehouse, r.workload.ml
+    return "\n".join(
+        [
+            "## Data Lake pipeline & ML (Bronze/Silver/Gold)",
+            "",
+            "_Informational - like Accumulated raw volume above, S3/Glue aren't part of the VM fleet_",
+            "_so none of this counts toward VM fit._",
+            "",
+            _table(
+                ["Layer", "HSI", "IoT", "Total/day"],
+                [
+                    ["Bronze (landed as-is)", f"{_n(lh.bronze_hsi_bytes_per_day / GB, 1)} GB",
+                     f"{_n(lh.bronze_iot_bytes_per_day / GB, 2)} GB", f"{_n(lh.bronze_bytes_per_day / GB, 1)} GB"],
+                    ["Silver (conformed; HSI = feature vectors only)", f"{_n(lh.silver_hsi_bytes_per_day / MB)} MB",
+                     f"{_n(lh.silver_iot_bytes_per_day / MB)} MB", f"{_n(lh.silver_bytes_per_day / MB)} MB"],
+                    ["Gold (curated aggregates)", f"{_n(lh.gold_hsi_bytes_per_day / MB)} MB",
+                     f"{_n(lh.gold_iot_bytes_per_day / MB)} MB", f"{_n(lh.gold_bytes_per_day / MB)} MB"],
+                ],
+            ),
+            "",
+            f"- Iceberg metadata: {_n(lh.iceberg_commits_per_day, 0)} commits/day across the "
+            f"Bronze/Silver/Gold tables, {_n(lh.iceberg_objects_per_day, 0)} new objects/day, "
+            f"{_n(lh.iceberg_metadata_bytes_per_day / MB)} MB/day of metadata bytes "
+            "(watch the object count, not the bytes - it drives S3 request cost and Glue Catalog limits; "
+            "see the compaction/snapshot-expiry item in the Storage Scalability checklist)",
+            f"- ML model artifacts: {_n(ml.model_artifact_total_bytes / MB)} MB total "
+            "(fixed, versioned store - retraining is periodic, not a daily rate)",
+            f"- ML predictions written back: {_n(ml.prediction_events_per_day, 0)} events/day, "
+            f"{_n(ml.prediction_bytes_per_day / MB)} MB/day",
+        ]
+    )
+
+
 def components_md(r: Result) -> str:
     rows = []
     for c in r.components + [r.total]:
@@ -117,6 +151,11 @@ def components_md(r: Result) -> str:
             notes.append(
                 f"- Prometheus: {_n(c.notes['active_series'], 0)} active series, "
                 f"{_n(c.notes['samples_per_s'], 0)} samples/s, RAM in use {_n(c.ram_load_gb)} GB"
+            )
+        elif c.name.startswith("Redis"):
+            notes.append(
+                f"- Redis: {_n(c.notes['keys'], 0)} keys (latest reading/prediction per sensor + "
+                f"HSI site), overwritten in place - not an accumulating stream"
             )
     return "\n".join(
         [
@@ -154,7 +193,7 @@ def fit_md(p: Params, r: Result) -> str:
             ),
             "",
             f"_OS overhead: {_n(p.sizing.os_ram_gb_per_vm)} GB RAM + {_n(p.sizing.os_disk_gb_per_vm)} GB disk per VM. "
-            "Components not modelled (CKAN, PostgreSQL, Solr, Redis, MQTT, API) are only counted if "
+            "Components not modelled (CKAN, PostgreSQL, Solr, the CKAN Redis instance, MQTT, API) are only counted if "
             "listed under [[extra_components]]._",
         ]
     )
@@ -194,7 +233,13 @@ def scaling_md(table) -> str:
 
 
 def full_md(p: Params, r: Result, table=None) -> str:
-    parts = ["# TRACE sizing report", "", workload_md(p, r), "", components_md(r), "", fit_md(p, r)]
+    parts = [
+        "# TRACE sizing report", "",
+        workload_md(p, r), "",
+        lakehouse_md(r), "",
+        components_md(r), "",
+        fit_md(p, r),
+    ]
     if table:
         parts += ["", scaling_md(table)]
     return "\n".join(parts) + "\n"

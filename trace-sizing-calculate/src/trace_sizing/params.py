@@ -113,8 +113,57 @@ class AlertingExporters:
 
 
 @dataclass
+class Redis:
+    """The streaming hot store (Real-time Inference branch): latest reading +
+    prediction per sensor/HSI site, overwritten in place - not a growing
+    stream. The separate CKAN Redis instance isn't modeled; add it under
+    [[extra_components]] if needed."""
+    bytes_per_key: float = 300.0           # one key per sensor + per HSI site
+    ram_overhead_mb: float = 50.0          # process + replication buffers
+    ram_headroom_factor: float = 2.0
+    vcpu: float = 0.25
+    min_disk_gb: float = 0.1               # RDB snapshot floor
+
+
+@dataclass
+class Lakehouse:
+    """Bronze/Silver/Gold volume (TRACE Data Lake pipeline branch).
+    Bronze HSI is assumed landed as-is (claim-check straight to S3); the
+    other figures are per the confirmed design: Silver keeps HSI feature
+    vectors/indices only, not a second full-resolution cube."""
+    bronze_iot_size_ratio: float = 1.0        # vs raw IoT bytes; 1.0 = landed as raw JSON
+    silver_iot_size_ratio: float = 0.3        # conformed/deduped Parquet vs raw IoT bytes
+    silver_hsi_kb_per_cube: float = 10.0      # spectral indices/calibration stats/QC flags only
+    gold_iot_rows_per_sensor_per_day: float = 24.0  # hourly aggregates
+    gold_iot_bytes_per_row: float = 80.0
+    gold_hsi_bytes_per_record: float = 1500.0       # per-sample score/classification + rollups
+    # Iceberg manifest-list + manifest file(s) + metadata.json snapshot, written
+    # on every commit, across the Bronze/Silver/Gold tables. Bytes are tiny;
+    # the object COUNT is what drives S3 request cost and Glue Catalog limits.
+    iceberg_tables: int = 3
+    iceberg_commit_interval_min: float = 15.0
+    iceberg_metadata_kb_per_commit: float = 20.0
+    iceberg_objects_per_commit: int = 3
+
+
+@dataclass
+class MLPipeline:
+    """AI/ML Pipeline training + Real-time API (Real-time Inference branch):
+    model artifacts stored to/loaded from the Data Lake, and predictions
+    written back. Artifact size is a fixed, versioned store, not a daily rate
+    - retraining is periodic, not continuous."""
+    model_variants: int = 5                # e.g. per site-group or crop type
+    model_mb_per_variant: float = 10.0      # tabular/LSTM-style model over Silver features
+    model_versions_retained: int = 3
+    predictions_per_sensor_per_day: float = 24.0   # written back at Gold's aggregate cadence
+    predictions_per_hsi_sample: float = 1.0
+    prediction_bytes: float = 100.0
+
+
+@dataclass
 class ExtraComponent:
-    """Anything the model does not derive (CKAN, PostgreSQL, Solr, Redis, MQTT, API...)."""
+    """Anything the model does not derive (CKAN, PostgreSQL, Solr, the CKAN
+    Redis instance, MQTT, API...)."""
     name: str
     vcpu: float = 0.0
     ram_gb: float = 0.0
@@ -157,6 +206,9 @@ class Params:
     prometheus: Prometheus = field(default_factory=Prometheus)
     grafana: Grafana = field(default_factory=Grafana)
     alerting: AlertingExporters = field(default_factory=AlertingExporters)
+    redis: Redis = field(default_factory=Redis)
+    lakehouse: Lakehouse = field(default_factory=Lakehouse)
+    ml: MLPipeline = field(default_factory=MLPipeline)
     sizing: Sizing = field(default_factory=Sizing)
     extra_components: list[ExtraComponent] = field(default_factory=list)
     vms: list[VM] = field(
@@ -185,6 +237,9 @@ _SECTIONS = {
     "prometheus": Prometheus,
     "grafana": Grafana,
     "alerting": AlertingExporters,
+    "redis": Redis,
+    "lakehouse": Lakehouse,
+    "ml": MLPipeline,
     "sizing": Sizing,
 }
 

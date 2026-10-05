@@ -49,10 +49,39 @@ class Accumulated:
 
 
 @dataclass
+class LakehouseVolume:
+    """Bronze/Silver/Gold daily volume (Data Lake pipeline branch). Informational
+    only - like `Accumulated`, this isn't counted in VM `Fit` (S3/Glue, not the
+    VM fleet)."""
+    bronze_hsi_bytes_per_day: float    # == HSILoad.bytes_per_day (claim-check, landed as-is)
+    bronze_iot_bytes_per_day: float
+    bronze_bytes_per_day: float
+    silver_hsi_bytes_per_day: float    # feature vectors/indices only, not a second full cube
+    silver_iot_bytes_per_day: float
+    silver_bytes_per_day: float
+    gold_iot_bytes_per_day: float
+    gold_hsi_bytes_per_day: float
+    gold_bytes_per_day: float
+    iceberg_commits_per_day: float
+    iceberg_objects_per_day: float     # drives S3 request cost / Glue Catalog limits, not bytes
+    iceberg_metadata_bytes_per_day: float
+
+
+@dataclass
+class MLVolume:
+    """AI/ML Pipeline training + predictions (Real-time Inference branch)."""
+    model_artifact_total_bytes: float  # fixed, versioned store - not a daily rate
+    prediction_events_per_day: float
+    prediction_bytes_per_day: float
+
+
+@dataclass
 class Workload:
     iot: IoTLoad
     hsi: HSILoad
     accumulated: Accumulated
+    lakehouse: LakehouseVolume
+    ml: MLVolume
     peak_events_per_s: float
     peak_bytes_per_s: float
     hsi_byte_share: float
@@ -150,6 +179,41 @@ def hsi_load(p: Params) -> HSILoad:
     )
 
 
+def lakehouse_volume(p: Params, iot: IoTLoad, hsi: HSILoad) -> LakehouseVolume:
+    lh = p.lakehouse
+    bronze_hsi = hsi.bytes_per_day                              # claim-check: landed as-is
+    bronze_iot = iot.bytes_per_day * lh.bronze_iot_size_ratio
+    silver_hsi = hsi.cubes_per_day * lh.silver_hsi_kb_per_cube * KB
+    silver_iot = iot.bytes_per_day * lh.silver_iot_size_ratio
+    gold_iot = iot.sensors * lh.gold_iot_rows_per_sensor_per_day * lh.gold_iot_bytes_per_row
+    gold_hsi = hsi.cubes_per_day * lh.gold_hsi_bytes_per_record
+    commits_per_day = DAY_S / 60 / lh.iceberg_commit_interval_min * lh.iceberg_tables
+    return LakehouseVolume(
+        bronze_hsi_bytes_per_day=bronze_hsi,
+        bronze_iot_bytes_per_day=bronze_iot,
+        bronze_bytes_per_day=bronze_hsi + bronze_iot,
+        silver_hsi_bytes_per_day=silver_hsi,
+        silver_iot_bytes_per_day=silver_iot,
+        silver_bytes_per_day=silver_hsi + silver_iot,
+        gold_iot_bytes_per_day=gold_iot,
+        gold_hsi_bytes_per_day=gold_hsi,
+        gold_bytes_per_day=gold_iot + gold_hsi,
+        iceberg_commits_per_day=commits_per_day,
+        iceberg_objects_per_day=commits_per_day * lh.iceberg_objects_per_commit,
+        iceberg_metadata_bytes_per_day=commits_per_day * lh.iceberg_metadata_kb_per_commit * KB,
+    )
+
+
+def ml_volume(p: Params, iot: IoTLoad, hsi: HSILoad) -> MLVolume:
+    m = p.ml
+    events = iot.sensors * m.predictions_per_sensor_per_day + hsi.cubes_per_day * m.predictions_per_hsi_sample
+    return MLVolume(
+        model_artifact_total_bytes=m.model_variants * m.model_mb_per_variant * m.model_versions_retained * MB,
+        prediction_events_per_day=events,
+        prediction_bytes_per_day=events * m.prediction_bytes,
+    )
+
+
 def workload(p: Params) -> Workload:
     iot, hsi = iot_load(p), hsi_load(p)
     year = (
@@ -171,6 +235,8 @@ def workload(p: Params) -> Workload:
             retained_bytes=year / 12 * retention_months,
             is_capped=retention_months < s.project_months,
         ),
+        lakehouse=lakehouse_volume(p, iot, hsi),
+        ml=ml_volume(p, iot, hsi),
         peak_events_per_s=iot.msg_per_s + hsi.cubes_per_s_peak,
         peak_bytes_per_s=iot.bytes_per_s + hsi.total_bytes_per_s_peak,
         hsi_byte_share=hsi.bytes_per_day / day if day else 0.0,
@@ -257,6 +323,23 @@ def alerting(p: Params) -> Component:
     return Component("Alertmanager + exporters", 0.0, a.vcpu, a.ram_gb, a.ram_gb, 0.0, a.disk_gb)
 
 
+def redis(p: Params, w: Workload) -> Component:
+    r = p.redis
+    keys = w.iot.sensors + p.hsi.sites_with_camera
+    live = keys * r.bytes_per_key
+    ram_load = r.ram_overhead_mb * MB / GB + live / GB
+    return Component(
+        name="Redis (hot store)",
+        cpu_load=0.0,
+        vcpu=r.vcpu,
+        ram_load_gb=ram_load,
+        ram_gb=max(r.ram_overhead_mb * MB / GB, ram_load * r.ram_headroom_factor),
+        data_gb=live / GB,
+        disk_gb=max(r.min_disk_gb, live / GB),      # RDB snapshot; keys overwritten in place, not accumulated
+        notes={"keys": keys},
+    )
+
+
 def _sum(name: str, comps: list[Component]) -> Component:
     return Component(
         name=name,
@@ -271,7 +354,7 @@ def _sum(name: str, comps: list[Component]) -> Component:
 
 def calculate(p: Params) -> Result:
     w = workload(p)
-    comps = [kafka(p, w), flink(p, w), prometheus(p, w), grafana(p), alerting(p)]
+    comps = [kafka(p, w), flink(p, w), prometheus(p, w), grafana(p), alerting(p), redis(p, w)]
     comps += [
         Component(e.name, e.vcpu, e.vcpu, e.ram_gb, e.ram_gb, e.disk_gb, e.disk_gb, {"extra": True})
         for e in p.extra_components

@@ -70,6 +70,40 @@ ram_gb = 0.25
 vcpu = 0.2
 disk_gb = 0.1
 
+# Streaming hot store (Real-time Inference branch): latest reading + prediction
+# per sensor/HSI site, overwritten in place. The separate CKAN Redis instance
+# isn't modeled - add it under [[extra_components]] if you need it sized too.
+[redis]
+bytes_per_key = 300
+ram_overhead_mb = 50
+vcpu = 0.25
+min_disk_gb = 0.1
+
+# Bronze/Silver/Gold volume (TRACE Data Lake pipeline branch) and the AI/ML
+# Pipeline (Real-time Inference branch). Informational only - S3/Glue aren't
+# part of the VM fleet, so this doesn't affect VM fit, only the sizing report.
+# Silver is set to store HSI feature vectors/indices only, not a second full
+# cube - confirm this matches your actual Silver ETL design.
+[lakehouse]
+bronze_iot_size_ratio = 1.0       # 1.0 = landed as raw JSON; lower if converted to Parquet on write
+silver_iot_size_ratio = 0.3       # conformed/deduped Parquet vs raw IoT bytes
+silver_hsi_kb_per_cube = 10       # spectral indices/calibration stats/QC flags only
+gold_iot_rows_per_sensor_per_day = 24   # hourly aggregates
+gold_iot_bytes_per_row = 80
+gold_hsi_bytes_per_record = 1500        # per-sample score/classification + rollups
+iceberg_tables = 3                      # Bronze + Silver + Gold
+iceberg_commit_interval_min = 15
+iceberg_metadata_kb_per_commit = 20
+iceberg_objects_per_commit = 3          # manifest list + manifest file + metadata.json snapshot
+
+[ml]
+model_variants = 5                # e.g. per site-group or crop type
+model_mb_per_variant = 10         # tabular/LSTM-style model over Silver features
+model_versions_retained = 3
+predictions_per_sensor_per_day = 24     # written back at Gold's aggregate cadence
+predictions_per_hsi_sample = 1
+prediction_bytes = 100
+
 [sizing]
 disk_headroom = 0.5
 os_ram_gb_per_vm = 1

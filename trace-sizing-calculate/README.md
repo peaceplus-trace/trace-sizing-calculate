@@ -7,9 +7,18 @@ settings), and it calculates:
 - **Usage**: message rates, throughput, daily volume, peak HSI upload bandwidth, and
   accumulated raw volume per day, month, year and project.
 - **Spec required**: CPU load vs vCPU to allocate, RAM in use vs RAM to allocate, and data
-  stored vs disk with headroom, for Kafka, Flink, Prometheus, Grafana and Alertmanager/exporters.
+  stored vs disk with headroom, for Kafka, Flink, Prometheus, Grafana, Alertmanager/exporters
+  and the Redis hot store.
+- **Data Lake pipeline & ML volume**: Bronze/Silver/Gold daily bytes, Iceberg commit/object
+  counts, and ML model artifact + prediction volume — informational (S3/Glue aren't part of
+  the VM fleet), but shows what the Data Lake pipeline and Real-time Inference branches add.
 - **VM fit**: whether the totals plus OS overhead fit the VM fleet (by default 3 × 4 vCPU / 16 GiB).
 - **Scaling**: the same figures at 0.1× to 100× the number of sites.
+
+These map onto the three branches off the single streaming backbone: **Monitoring & Alerting**
+(Kafka → Flink → Prometheus → Grafana → paging), **Real-time Inference** (Kafka → Flink →
+Redis hot store → API, plus the AI/ML Pipeline's model artifacts and predictions), and the
+**TRACE Data Lake pipeline** (Kafka → Bronze → Silver → Gold via Iceberg + Spark/Glue).
 
 `[iot]` and `[hsi]` implement the canonical 11-parameter **System Parameters** table used
 across the TRACE chats (IoT #1-6, HSI #7-11; see [Parameter file](#parameter-file)).
@@ -83,8 +92,21 @@ The 11 system parameters:
   from Kafka's and Prometheus's own short operational retention. Unset (default) keeps
   everything for the whole project; set it below `project_months` to see the "Retained" row
   in the workload report plateau instead of growing with the project.
+- `[redis]`: the streaming hot store (Real-time Inference branch) — latest reading + prediction
+  per sensor/HSI site, overwritten in place, so it's sized as a fixed key count, not a growing
+  stream. The separate CKAN Redis instance isn't modeled; add it under `[[extra_components]]`.
+- `[lakehouse]`: Bronze/Silver/Gold volume (Data Lake pipeline branch). Bronze HSI is assumed
+  landed as-is (claim-check, straight to S3); `silver_hsi_kb_per_cube` assumes Silver stores
+  HSI **feature vectors/indices only**, not a second full-resolution cube — confirm this
+  matches your actual Silver ETL design before trusting the numbers, since storing a corrected
+  full cube instead would roughly double total Lakehouse HSI volume. `iceberg_*` fields turn
+  commit cadence into an objects/day figure — watch that number for S3 request cost and Glue
+  Catalog limits; the bytes themselves are tiny.
+- `[ml]`: the AI/ML Pipeline (Real-time Inference branch) — model artifact size is a fixed,
+  versioned store (retraining is periodic, not continuous), while predictions written back to
+  the lake are a daily rate tied to sensor count and HSI samples.
 - `[[vms]]`: the fleet to check against.
-- `[[extra_components]]`: CKAN, PostgreSQL, Solr, Redis, MQTT, the inference API, and anything
+- `[[extra_components]]`: CKAN, PostgreSQL, Solr, the CKAN Redis instance, MQTT, and anything
   else the model doesn't derive. Add measured figures here so they count toward the totals
   and the fit check.
 
@@ -104,6 +126,13 @@ The 11 system parameters:
 | Prometheus RAM | series × 4 KB + 150 MB in use; allocate max(1 GB, 2 × in use) |
 | Accumulated per year | HSI/day × HSI days + IoT/day × IoT days |
 | Retained storage | per-year rate × min(`sizing.retention_months`, `sizing.project_months`) ÷ 12 |
+| Redis keys | sensors + HSI sites (one "latest" key each) |
+| Bronze | HSI: same as raw. IoT: raw × `bronze_iot_size_ratio` |
+| Silver | HSI: cubes/day × `silver_hsi_kb_per_cube`. IoT: raw × `silver_iot_size_ratio` |
+| Gold | IoT: sensors × rows/sensor/day × bytes/row. HSI: cubes/day × bytes/record |
+| Iceberg objects/day | (1440 ÷ `iceberg_commit_interval_min`) × `iceberg_tables` × `iceberg_objects_per_commit` |
+| ML model artifacts | `model_variants` × MB/variant × `model_versions_retained` (fixed, not a rate) |
+| ML predictions/day | sensors × predictions/sensor/day + cubes/day × predictions/HSI sample |
 
 Scaling multiplies the number of sites (and HSI camera sites). Sensors and cameras per site
 stay the same.
@@ -118,6 +147,11 @@ stay the same.
 - The fit check compares totals against the whole fleet. It does not place components on
   individual VMs.
 - Costs (EC2, S3 tiers, Glue) are not included yet.
+- `[lakehouse]` and `[ml]` are estimates, not measurements — unlike Kafka/Flink/Prometheus
+  (which trace back to hand calculations in the cost-estimate doc), the Silver/Gold row sizes,
+  Iceberg commit overhead, and ML model/prediction sizes are reasoned defaults. Revisit them
+  once the actual Glue ETL and training pipeline exist. `[lakehouse]`/`[ml]` also aren't counted
+  in VM `Fit`, since they're S3/Glue-based, not part of the VM fleet.
 
 ## Tests
 

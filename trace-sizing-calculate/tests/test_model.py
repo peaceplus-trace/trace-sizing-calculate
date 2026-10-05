@@ -111,16 +111,44 @@ def test_prometheus(r):
     assert p.cpu_load < 0.05
 
 
+def test_redis(r):
+    red = comp(r, "Redis")
+    assert red.notes["keys"] == 510                     # 500 sensors + 10 HSI sites
+    assert red.vcpu == 0.25
+    assert red.ram_gb == approx(0.1, abs=0.01)
+    assert red.disk_gb == approx(0.1, abs=0.01)          # floor; live data is ~0.15 MB
+
+
+def test_lakehouse_volume(r):
+    lh = r.workload.lakehouse
+    assert lh.bronze_hsi_bytes_per_day / GB == approx(96)         # == raw HSI, landed as-is
+    assert lh.bronze_iot_bytes_per_day / GB == approx(0.72)       # ratio 1.0 by default
+    assert lh.silver_hsi_bytes_per_day / MB == approx(4.8)        # 480 cubes x 10 KB
+    assert lh.silver_iot_bytes_per_day / MB == approx(216)        # 0.72 GB x 0.3
+    assert lh.gold_iot_bytes_per_day / MB == approx(0.96, abs=0.01)   # 500 x 24 x 80 B
+    assert lh.gold_hsi_bytes_per_day / MB == approx(0.72, abs=0.01)   # 480 x 1500 B
+    assert lh.iceberg_commits_per_day == approx(288)              # (1440/15) x 3 tables
+    assert lh.iceberg_objects_per_day == approx(864)
+    assert lh.iceberg_metadata_bytes_per_day / MB == approx(5.76, abs=0.01)
+
+
+def test_ml_volume(r):
+    ml = r.workload.ml
+    assert ml.model_artifact_total_bytes / MB == approx(150)      # 5 variants x 10 MB x 3 versions
+    assert ml.prediction_events_per_day == approx(12_480)         # 500x24 + 480x1
+    assert ml.prediction_bytes_per_day / MB == approx(1.248, abs=0.001)
+
+
 def test_totals_and_fit(r):
     t = r.total
     assert t.cpu_load < 0.2
-    assert t.vcpu == approx(4.95)
-    assert t.ram_gb == approx(10.8)
+    assert t.vcpu == approx(5.2)
+    assert t.ram_gb == approx(10.9, abs=0.05)
     assert t.data_gb == approx(17, abs=0.1)
-    assert t.disk_gb == approx(26.6, abs=0.1)
+    assert t.disk_gb == approx(26.7, abs=0.1)
     assert r.fit.fits
-    assert r.fit.required_ram_gb == approx(13.8)
-    assert r.fit.required_disk_gb == approx(86.6, abs=0.1)
+    assert r.fit.required_ram_gb == approx(13.9, abs=0.05)
+    assert r.fit.required_disk_gb == approx(86.7, abs=0.1)
 
 
 @pytest.mark.parametrize(
@@ -177,8 +205,8 @@ def test_hsi_without_upload_window_gives_24h_average():
 def test_extra_components_counted():
     p = from_dict({"extra_components": [{"name": "CKAN", "vcpu": 2, "ram_gb": 6, "disk_gb": 40}]})
     r = calculate(p)
-    assert r.total.vcpu == approx(6.95)
-    assert r.total.ram_gb == approx(16.8)
+    assert r.total.vcpu == approx(7.2)
+    assert r.total.ram_gb == approx(16.9, abs=0.05)
 
 
 def test_unknown_key_rejected():

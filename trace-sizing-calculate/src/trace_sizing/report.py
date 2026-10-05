@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from .model import GB, KB, MB, TB, Result
 from .params import Params
 
@@ -19,6 +21,39 @@ def _table(headers: list[str], rows: list[list[str]]) -> str:
     out = ["| " + " | ".join(headers) + " |", "|" + "|".join("---" for _ in headers) + "|"]
     out += ["| " + " | ".join(r) + " |" for r in rows]
     return "\n".join(out)
+
+
+def _value(x) -> str:
+    if x is None:
+        return "none"
+    if isinstance(x, bool):
+        return "true" if x else "false"
+    if isinstance(x, float):
+        return _n(x, 4)
+    if isinstance(x, list):
+        return ", ".join(_value(v) for v in x)
+    return str(x)
+
+
+_SECTIONS = ["iot", "hsi", "kafka", "flink", "prometheus", "grafana",
+             "alerting", "redis", "lakehouse", "ml", "sizing"]
+
+
+def params_md(p: Params) -> str:
+    """Every resolved input value (TOML file + any --set overrides), so a
+    report states exactly what it was computed from."""
+    lines = ["## Parameters used", ""]
+    for name in _SECTIONS:
+        obj = getattr(p, name)
+        rows = [[f.name, _value(getattr(obj, f.name))] for f in dataclasses.fields(obj)]
+        lines += [f"**[{name}]**", "", _table(["Key", "Value"], rows), ""]
+    if p.vms:
+        rows = [[v.name, _n(v.vcpu), f"{_n(v.ram_gib)} GiB", f"{_n(v.disk_gb)} GB"] for v in p.vms]
+        lines += ["**[[vms]]**", "", _table(["Name", "vCPU", "RAM", "Disk"], rows), ""]
+    if p.extra_components:
+        rows = [[e.name, _n(e.vcpu), f"{_n(e.ram_gb)} GB", f"{_n(e.disk_gb)} GB"] for e in p.extra_components]
+        lines += ["**[[extra_components]]**", "", _table(["Name", "vCPU", "RAM", "Disk"], rows), ""]
+    return "\n".join(lines).rstrip()
 
 
 def workload_md(p: Params, r: Result) -> str:
@@ -232,9 +267,11 @@ def scaling_md(table) -> str:
     )
 
 
-def full_md(p: Params, r: Result, table=None) -> str:
-    parts = [
-        "# TRACE sizing report", "",
+def full_md(p: Params, r: Result, table=None, show_params: bool = True) -> str:
+    parts = ["# TRACE sizing report", ""]
+    if show_params:
+        parts += [params_md(p), ""]
+    parts += [
         workload_md(p, r), "",
         lakehouse_md(r), "",
         components_md(r), "",

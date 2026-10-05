@@ -8,6 +8,7 @@ import pytest
 from trace_sizing import Params, calculate, from_dict, load, scaling_table
 from trace_sizing.cli import main
 from trace_sizing.model import GB, KB, MB, TB
+from trace_sizing.report import params_md
 
 ROOT = Path(__file__).parent.parent
 EXAMPLES = ROOT / "examples"
@@ -227,3 +228,25 @@ def test_cli_markdown(capsys):
     out = capsys.readouterr().out
     assert "## VM fit: FITS" in out
     assert "## Scaling" in out
+
+
+def test_params_md_renders_every_section():
+    out = params_md(Params())
+    for section in ["iot", "hsi", "kafka", "flink", "prometheus", "grafana",
+                     "alerting", "redis", "lakehouse", "ml", "sizing"]:
+        assert f"**[{section}]**" in out
+    assert "| pilot_sites | 10 |" in out
+    assert "| pixels | none |" in out        # None -> "none", not "None" or blank
+    assert "| claim_check | true |" in out   # bool -> "true"/"false"
+
+
+def test_cli_shows_params_with_overrides_by_default(capsys):
+    assert main(["--scale", "none", "--set", "iot.pilot_sites=5"]) == 0
+    out = capsys.readouterr().out
+    assert "## Parameters used" in out
+    assert "| pilot_sites | 5 |" in out      # the override, not the default of 10
+
+
+def test_cli_no_params_hides_section(capsys):
+    assert main(["--scale", "none", "--no-params"]) == 0
+    assert "## Parameters used" not in capsys.readouterr().out

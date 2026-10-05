@@ -49,6 +49,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--scale", help="comma-separated scale factors, e.g. 0.5,1,2,10 ('none' to skip)")
     ap.add_argument("--set", action="append", default=[], metavar="SECTION.KEY=VALUE",
                     help="override one parameter, e.g. --set iot.pilot_sites=5 (repeatable)")
+    ap.add_argument("--no-params", action="store_true",
+                    help="hide the 'Parameters used' section (md format only; json always includes params)")
     ap.add_argument("-o", "--output", help="write to file instead of stdout")
     args = ap.parse_args(argv)
 
@@ -73,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         }
         text = json.dumps(doc, indent=2) + "\n"
     else:
-        text = full_md(p, result, table)
+        text = full_md(p, result, table, show_params=not args.no_params)
 
     if args.output:
         with open(args.output, "w") as f:

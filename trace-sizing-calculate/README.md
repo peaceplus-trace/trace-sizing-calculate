@@ -15,6 +15,10 @@ settings), and it calculates:
 - **VM fit**: whether the totals plus OS overhead fit the VM fleet (by default 3 × 4 vCPU / 16 GiB).
 - **Scaling**: the same figures at 0.1× to 100× the number of sites.
 
+Every run also prints a **Parameters used** section with every resolved input value — the
+TOML file plus any `--set` overrides — so a report states exactly what it was computed from
+(`--no-params` to hide it).
+
 These map onto the three branches off the single streaming backbone: **Monitoring & Alerting**
 (Kafka → Flink → Prometheus → Grafana → paging), **Real-time Inference** (Kafka → Flink →
 Redis hot store → API, plus the AI/ML Pipeline's model artifacts and predictions), and the
@@ -52,6 +56,7 @@ Common options:
 | `--set iot.pilot_sites=5` | Override one parameter (repeatable) |
 | `--scale 0.5,1,2,10` | Scale factors for the scaling table (`none` to skip it) |
 | `--format json` | Machine-readable output (params + result + scaling) |
+| `--no-params` | Hide the "Parameters used" section (md output shows it by default) |
 | `-o report.md` | Write to a file |
 
 Example: what changes if HSI runs at 3 sites with 100 MB cubes, 20 samples/day?

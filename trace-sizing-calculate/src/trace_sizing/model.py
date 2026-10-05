@@ -42,7 +42,10 @@ class Accumulated:
     day_bytes: float
     month_bytes: float
     year_bytes: float
-    project_bytes: float
+    project_bytes: float          # total ever produced over the whole project
+    retention_months: float       # effective retention window (capped at project_months)
+    retained_bytes: float         # steady-state storage to provision for, at retention_months
+    is_capped: bool                # True if retention_months < project_months (data rolls off)
 
 
 @dataclass
@@ -154,6 +157,8 @@ def workload(p: Params) -> Workload:
         + iot.bytes_per_day * p.iot.operating_days_per_year
     )
     day = hsi.bytes_per_day + iot.bytes_per_day
+    s = p.sizing
+    retention_months = s.project_months if s.retention_months is None else min(s.retention_months, s.project_months)
     return Workload(
         iot=iot,
         hsi=hsi,
@@ -161,7 +166,10 @@ def workload(p: Params) -> Workload:
             day_bytes=day,
             month_bytes=year / 12,
             year_bytes=year,
-            project_bytes=year * p.sizing.project_months / 12,
+            project_bytes=year * s.project_months / 12,
+            retention_months=retention_months,
+            retained_bytes=year / 12 * retention_months,
+            is_capped=retention_months < s.project_months,
         ),
         peak_events_per_s=iot.msg_per_s + hsi.cubes_per_s_peak,
         peak_bytes_per_s=iot.bytes_per_s + hsi.total_bytes_per_s_peak,

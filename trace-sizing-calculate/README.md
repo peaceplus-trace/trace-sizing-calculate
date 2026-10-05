@@ -79,6 +79,10 @@ The 11 system parameters:
 - `hsi.upload_window_hours_per_day` is **not** one of the 11 parameters — it only turns the
   daily cube count into a peak MB/s figure for network sizing. Set it to `none` (or omit it with
   `--set hsi.upload_window_hours_per_day=none`) to get a 24h average rate instead of a peak.
+- `sizing.retention_months`: months of data to keep across all services (S3/Iceberg), separate
+  from Kafka's and Prometheus's own short operational retention. Unset (default) keeps
+  everything for the whole project; set it below `project_months` to see the "Retained" row
+  in the workload report plateau instead of growing with the project.
 - `[[vms]]`: the fleet to check against.
 - `[[extra_components]]`: CKAN, PostgreSQL, Solr, Redis, MQTT, the inference API, and anything
   else the model doesn't derive. Add measured figures here so they count toward the totals
@@ -99,6 +103,7 @@ The 11 system parameters:
 | Prometheus disk | series ÷ scrape × 86400 × bytes/sample × retention × (1 + headroom) |
 | Prometheus RAM | series × 4 KB + 150 MB in use; allocate max(1 GB, 2 × in use) |
 | Accumulated per year | HSI/day × HSI days + IoT/day × IoT days |
+| Retained storage | per-year rate × min(`sizing.retention_months`, `sizing.project_months`) ÷ 12 |
 
 Scaling multiplies the number of sites (and HSI camera sites). Sensors and cameras per site
 stay the same.

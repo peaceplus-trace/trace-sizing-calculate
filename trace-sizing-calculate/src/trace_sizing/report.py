@@ -65,11 +65,23 @@ def workload_md(p: Params, r: Result) -> str:
                 ["1 day", f"{_n(a.day_bytes / GB, 1)} GB"],
                 ["1 month", f"{_n(a.month_bytes / TB)} TB"],
                 ["1 year", f"{_n(a.year_bytes / TB, 1)} TB"],
-                [f"Project ({p.sizing.project_months} months)", f"{_n(a.project_bytes / TB, 1)} TB"],
+                [f"Project, total produced ({p.sizing.project_months} months)", f"{_n(a.project_bytes / TB, 1)} TB"],
+                [
+                    f"**Retained ({_n(a.retention_months, 1)} months)**"
+                    + (" — storage plateaus here" if a.is_capped else " = whole project, nothing rolls off"),
+                    f"**{_n(a.retained_bytes / TB, 1)} TB**",
+                ],
             ],
         ),
         "",
-        f"_Year = HSI x {p.hsi.operating_days_per_year} days + IoT x {p.iot.operating_days_per_year} days._",
+        f"_Year = HSI x {p.hsi.operating_days_per_year} days + IoT x {p.iot.operating_days_per_year} days. "
+        + (
+            f"Retention is capped at {_n(a.retention_months, 1)} months (`sizing.retention_months`); "
+            "older data rolls off, so provision storage for the Retained row, not the project total._"
+            if a.is_capped
+            else "No `sizing.retention_months` set (or it's ≥ project_months), so nothing rolls off and "
+            "Retained equals the project total._"
+        ),
     ]
     return "\n".join(lines)
 

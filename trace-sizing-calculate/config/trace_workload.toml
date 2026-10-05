@@ -75,6 +75,12 @@ disk_headroom = 0.5
 os_ram_gb_per_vm = 1
 os_disk_gb_per_vm = 20
 project_months = 36
+# Months of data to keep across all services (S3/Iceberg storage), not
+# Kafka's or Prometheus's own short operational retention set above.
+# Leave unset (or "none") to keep everything for the whole project; set it
+# below project_months to see storage plateau at a rolling window instead
+# of growing for the full 36 months.
+# retention_months = 12
 scale_factors = [0.1, 0.5, 1, 2, 10, 100]
 
 # Fleet to check the totals against (4 vCPU / 16 GiB each)

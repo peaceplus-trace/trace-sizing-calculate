@@ -135,7 +135,17 @@ class Sizing:
     os_ram_gb_per_vm: float = 1.0          # 46
     os_disk_gb_per_vm: float = 20.0        # 46
     project_months: int = 36
+    # Months of data to keep in storage across all services (S3/Iceberg,
+    # not Kafka's or Prometheus's own short operational retention below).
+    # None = keep everything for the whole project (no roll-off). If set
+    # below project_months, storage plateaus at a rolling retention_months
+    # window instead of growing for the full project.
+    retention_months: float | None = None
     scale_factors: list[float] = field(default_factory=lambda: [0.1, 0.5, 1, 2, 10, 100])
+
+    def __post_init__(self) -> None:
+        if self.retention_months is not None and self.retention_months <= 0:
+            raise ValueError("[sizing] retention_months must be positive (or omitted/none)")
 
 
 @dataclass

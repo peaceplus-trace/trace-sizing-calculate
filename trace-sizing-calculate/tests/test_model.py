@@ -54,6 +54,32 @@ def test_accumulated(r):
     assert a.year_bytes / TB == approx(25.2, abs=0.05)
     assert a.month_bytes / TB == approx(2.1, abs=0.05)
     assert a.project_bytes / TB == approx(76, abs=0.5)
+    # No retention_months set by default: retained == the whole project, nothing capped.
+    assert a.retention_months == 36
+    assert not a.is_capped
+    assert a.retained_bytes == approx(a.project_bytes)
+
+
+def test_retention_months_caps_storage():
+    p = from_dict({"sizing": {"retention_months": 12}})
+    a = calculate(p).workload.accumulated
+    assert a.is_capped
+    assert a.retention_months == 12
+    assert a.retained_bytes == approx(a.year_bytes)        # 12 months == 1 year
+    assert a.retained_bytes < a.project_bytes
+
+
+def test_retention_months_above_project_is_not_capped():
+    p = from_dict({"sizing": {"retention_months": 999}})
+    a = calculate(p).workload.accumulated
+    assert not a.is_capped
+    assert a.retention_months == p.sizing.project_months
+    assert a.retained_bytes == approx(a.project_bytes)
+
+
+def test_retention_months_must_be_positive():
+    with pytest.raises(ValueError, match="retention_months"):
+        from_dict({"sizing": {"retention_months": 0}})
 
 
 def test_kafka(r):

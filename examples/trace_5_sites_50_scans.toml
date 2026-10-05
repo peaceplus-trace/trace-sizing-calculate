@@ -1,0 +1,16 @@
+# TRACE - cost-estimate plan: 5 sites, 20 sensors/site at 1 reading/min,
+# 1 HSI unit per site doing 50 scans/day of 640 x 480 x 100 bands x 2 B (61.44 MB).
+
+[iot]
+pilot_sites = 5
+sensors_per_site = 20
+reporting_interval_s = 60
+
+[hsi]
+sites_with_camera = 5
+pixels = 640
+lines = 480
+bands = 100
+bytes_per_value = 2
+samples_per_day = 50
+scans_per_sample = 1

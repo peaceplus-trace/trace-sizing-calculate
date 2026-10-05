@@ -1,0 +1,96 @@
+# TRACE WP3 - planning case: 10 sites, 48 HSI scans/site/day, Kafka RF=3.
+# Every value here equals the built-in default; edit what you need.
+#
+# [iot] and [hsi] implement the canonical 11-parameter "System Parameters"
+# table used across the TRACE chats (IoT #1-6, HSI #7-11); the number in
+# each comment is that parameter's # in the table.
+
+[iot]
+pilot_sites = 10                # 1  Pilot site count
+sensors_per_site = 50           # 2  Sensor count per site
+reporting_interval_s = 30       # 3  Reporting interval (s)
+message_bytes = 500             # 4  Message size (bytes/reading)
+operating_hours_per_day = 24    # 5  Operating hours (24 if 24/7)
+operating_days_per_year = 365   # 6  Operating days per year
+
+[hsi]
+sites_with_camera = 10          # 7  Number of sites with HSI camera
+cube_mb = 200                   # 8  Image size (cube size, MB) - or set pixels/lines/bands/bytes_per_value
+scans_per_sample = 1            # 9  Scans per sample (incl. repeats/reference scans)
+samples_per_day = 48            # 10 Number of samples per day (per HSI site)
+operating_days_per_year = 260   # 11 HSI operating days per year (weekdays)
+# Not one of the 11 parameters - only used for the peak upload-rate estimate.
+upload_window_hours_per_day = 8
+pointer_event_bytes = 500
+claim_check = true              # cubes -> S3, only pointer events -> Kafka
+
+[kafka]
+retention_days = 7
+replication_factor = 3
+brokers = 3
+ram_gb_per_broker = 2
+vcpu_per_broker = 1
+
+[flink]
+window_s = 3600
+state_bytes_per_reading = 100
+checkpoints_retained = 3
+cpu_us_per_event = 50
+jobmanager_gb = 1.6
+taskmanager_gb = 1.7
+vcpu = 1
+
+[prometheus]
+scrape_interval_s = 15
+retention_days = 15
+metrics_per_sensor = 8
+hsi_metrics_per_site = 4
+infrastructure_series = 9600
+store_sensor_values = true
+bytes_per_sample = 1.5
+ram_kb_per_series = 4
+process_overhead_mb = 150
+
+[grafana]
+ram_gb = 0.25
+vcpu = 0.25
+disk_gb = 0.1
+
+[alerting]                      # Alertmanager + exporters
+ram_gb = 0.25
+vcpu = 0.2
+disk_gb = 0.1
+
+[sizing]
+disk_headroom = 0.5
+os_ram_gb_per_vm = 1
+os_disk_gb_per_vm = 20
+project_months = 36
+scale_factors = [0.1, 0.5, 1, 2, 10, 100]
+
+# Fleet to check the totals against (4 vCPU / 16 GiB each)
+[[vms]]
+name = "portal"
+vcpu = 4
+ram_gib = 16
+disk_gb = 100
+
+[[vms]]
+name = "data-plane"
+vcpu = 4
+ram_gib = 16
+disk_gb = 100
+
+[[vms]]
+name = "app"
+vcpu = 4
+ram_gib = 16
+disk_gb = 50
+
+# Components the model does not derive. Fill in once measured, then they
+# are included in the totals and the VM fit check.
+# [[extra_components]]
+# name = "CKAN + PostgreSQL + Solr"
+# vcpu = 2
+# ram_gb = 6
+# disk_gb = 40

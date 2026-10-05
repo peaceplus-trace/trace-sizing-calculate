@@ -27,13 +27,13 @@ pip install -e '.[dev]'
 ```
 
 ```bash
-trace-sizing examples/trace_10_sites.toml
+trace-sizing config/trace_workload.toml
 ```
 
 You can also run it without installing:
 
 ```bash
-PYTHONPATH=src python3 -m trace_sizing examples/trace_10_sites.toml
+PYTHONPATH=src python3 -m trace_sizing config/trace_workload.toml
 ```
 
 Common options:
@@ -53,7 +53,7 @@ trace-sizing --set hsi.sites_with_camera=3 --set hsi.cube_mb=100 --set hsi.sampl
 
 ## Parameter file
 
-The parameter file is TOML. [examples/trace_10_sites.toml](examples/trace_10_sites.toml)
+The parameter file is TOML. [config/trace_workload.toml](config/trace_workload.toml)
 lists every key, with the parameter's # from the System Parameters table in a comment next
 to each `[iot]`/`[hsi]` field. Omitted keys use the defaults, and unknown keys are rejected
 so typos don't pass silently.

@@ -9,7 +9,9 @@ from trace_sizing import Params, calculate, from_dict, load, scaling_table
 from trace_sizing.cli import main
 from trace_sizing.model import GB, KB, MB, TB
 
-EXAMPLES = Path(__file__).parent.parent / "examples"
+ROOT = Path(__file__).parent.parent
+EXAMPLES = ROOT / "examples"
+CONFIG = ROOT / "config"
 approx = pytest.approx
 
 
@@ -125,8 +127,8 @@ def test_100x_grows_flink_and_prometheus():
     assert not r.fit.fits                        # ~2.3 TB of Kafka disk
 
 
-def test_example_file_equals_defaults():
-    assert load(EXAMPLES / "trace_10_sites.toml") == Params()
+def test_config_file_equals_defaults():
+    assert load(CONFIG / "trace_workload.toml") == Params()
 
 
 def test_cube_from_dimensions():
@@ -167,7 +169,7 @@ def test_cli_json_and_overrides(capsys):
 
 
 def test_cli_markdown(capsys):
-    assert main([str(EXAMPLES / "trace_10_sites.toml"), "--scale", "1,10"]) == 0
+    assert main([str(CONFIG / "trace_workload.toml"), "--scale", "1,10"]) == 0
     out = capsys.readouterr().out
     assert "## VM fit: FITS" in out
     assert "## Scaling" in out

@@ -1,9 +1,18 @@
-# TRACE WP3 - planning case: 10 sites, 48 HSI scans/site/day, Kafka RF=3.
-# Every value here equals the built-in default; edit what you need.
+# TRACE workload parameters - the input config for the sizing calculator.
 #
-# [iot] and [hsi] implement the canonical 11-parameter "System Parameters"
-# table used across the TRACE chats (IoT #1-6, HSI #7-11); the number in
-# each comment is that parameter's # in the table.
+# [iot] and [hsi] are the canonical 11-parameter "System Parameters" table
+# used across the TRACE chats (IoT #1-6, HSI #7-11); the number in each
+# comment is that parameter's # in the table. Edit the values below to match
+# the current plan; everything else (Kafka/Flink/Prometheus/VMs/sizing) can
+# be left as-is, overridden here, or overridden per run with --set.
+#
+# Currently set to the pilot plan from the TRACE WP3 cost-estimate doc:
+# 10 sites, 50 sensors/site, 48 HSI scans/site/day. Values here equal the
+# tool's built-in defaults, so this file and omitting it give the same result
+# until you change something.
+#
+# Run it with:
+#   trace-sizing config/trace_workload.toml
 
 [iot]
 pilot_sites = 10                # 1  Pilot site count

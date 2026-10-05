@@ -41,7 +41,10 @@ def apply_overrides(p: params_mod.Params, overrides: list[str]) -> params_mod.Pa
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="trace-sizing", description="TRACE WP3 platform sizing calculator")
-    ap.add_argument("params", nargs="?", help="TOML parameter file (omit to use the TRACE defaults)")
+    ap.add_argument(
+        "params", nargs="?",
+        help="TOML parameter file, e.g. config/trace_workload.toml (omit to use the TRACE defaults)",
+    )
     ap.add_argument("--format", choices=["md", "json"], default="md")
     ap.add_argument("--scale", help="comma-separated scale factors, e.g. 0.5,1,2,10 ('none' to skip)")
     ap.add_argument("--set", action="append", default=[], metavar="SECTION.KEY=VALUE",

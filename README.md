@@ -21,6 +21,8 @@ TOML file plus any `--set` overrides — so a report states exactly what it was 
 report as a single, dependency-free HTML page (light/dark, usage-percentage bars, collapsible
 parameters) you can open directly or send to someone.
 
+Each report also has a **Formulas** section: every derived number (IoT rates, HSI cubes, Kafka/Flink/Prometheus/Redis sizing, Bronze/Silver/Gold, ML, VM fit) with its formula, the formula with this run's values substituted in, and the result. The formulas are listed in `src/trace_sizing/formulas.py`; if you change a calculation in `model.py`, update its formula there too.
+
 These map onto the three branches off the single streaming backbone: **Monitoring & Alerting**
 (Kafka → Flink → Prometheus → Grafana → paging), **Real-time Inference** (Kafka → Flink →
 Redis hot store → API, plus the AI/ML Pipeline's model artifacts and predictions), and the
@@ -66,6 +68,7 @@ Common options:
 | `--format html` | Single self-contained HTML page (light/dark, collapsible params, usage bars) |
 | `--format json` | Machine-readable output (params + result + scaling) |
 | `--no-params` | Hide the "Parameters used" section (md/html only; json always includes params) |
+| `--no-formulas` | Hide the "Formulas" section (md/html only; json always includes formulas) |
 | `-o report.md` | Write to a file |
 
 Example: what changes if HSI runs at 3 sites with 100 MB cubes, 20 samples/day?

@@ -4,17 +4,10 @@ from __future__ import annotations
 
 import dataclasses
 
+from .fmt import _n
+from .formulas import formulas
 from .model import GB, KB, MB, TB, Result
 from .params import Params
-
-
-def _n(x: float, d: int = 2) -> str:
-    if x == 0:
-        return "0"
-    if abs(x) < 10 ** -d:
-        return f"< {10 ** -d:g}"
-    s = f"{x:,.{d}f}"
-    return s.rstrip("0").rstrip(".") if "." in s else s
 
 
 def _table(headers: list[str], rows: list[list[str]]) -> str:
@@ -267,7 +260,21 @@ def scaling_md(table) -> str:
     )
 
 
-def full_md(p: Params, r: Result, table=None, show_params: bool = True) -> str:
+def formulas_md(p: Params, r: Result) -> str:
+    """Every derived number, its formula, and this run's values substituted in."""
+    out = ["## Formulas", "",
+           "_Each derived number, its formula (as in `model.py`), and this run's values substituted in._", ""]
+    by_section: dict[str, list] = {}
+    for f in formulas(p, r):
+        by_section.setdefault(f.section, []).append(
+            [f.quantity, f"`{f.formula}`", f.worked, f"**{f.result}**"]
+        )
+    for section, rows in by_section.items():
+        out += [f"**{section}**", "", _table(["Quantity", "Formula", "This run", "Result"], rows), ""]
+    return "\n".join(out).rstrip()
+
+
+def full_md(p: Params, r: Result, table=None, show_params: bool = True, show_formulas: bool = True) -> str:
     parts = ["# TRACE sizing report", ""]
     if show_params:
         parts += [params_md(p), ""]
@@ -277,6 +284,8 @@ def full_md(p: Params, r: Result, table=None, show_params: bool = True) -> str:
         components_md(r), "",
         fit_md(p, r),
     ]
+    if show_formulas:
+        parts += ["", formulas_md(p, r)]
     if table:
         parts += ["", scaling_md(table)]
     return "\n".join(parts) + "\n"

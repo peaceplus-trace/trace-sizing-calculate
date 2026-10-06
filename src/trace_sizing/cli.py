@@ -8,6 +8,7 @@ import json
 import sys
 
 from . import params as params_mod
+from .formulas import formulas
 from .html_report import full_html
 from .model import calculate, scaling_table
 from .report import full_md
@@ -52,6 +53,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="override one parameter, e.g. --set iot.pilot_sites=5 (repeatable)")
     ap.add_argument("--no-params", action="store_true",
                     help="hide the 'Parameters used' section (md/html only; json always includes params)")
+    ap.add_argument("--no-formulas", action="store_true",
+                    help="hide the Formulas section (md/html only)")
     ap.add_argument("-o", "--output", help="write to file instead of stdout")
     args = ap.parse_args(argv)
 
@@ -73,12 +76,13 @@ def main(argv: list[str] | None = None) -> int:
             "params": dataclasses.asdict(p),
             "result": result.to_dict(),
             "scaling": [{"factor": f, "result": r.to_dict()} for f, _, r in (table or [])],
+            "formulas": [dataclasses.asdict(f) for f in formulas(p, result)],
         }
         text = json.dumps(doc, indent=2) + "\n"
     elif args.format == "html":
-        text = full_html(p, result, table, show_params=not args.no_params)
+        text = full_html(p, result, table, show_params=not args.no_params, show_formulas=not args.no_formulas)
     else:
-        text = full_md(p, result, table, show_params=not args.no_params)
+        text = full_md(p, result, table, show_params=not args.no_params, show_formulas=not args.no_formulas)
 
     if args.output:
         with open(args.output, "w") as f:

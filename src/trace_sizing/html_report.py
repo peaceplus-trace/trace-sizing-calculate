@@ -12,7 +12,9 @@ import html as _html
 
 from .model import GB, MB, Result
 from .params import Params
-from .report import _SECTIONS, _n, _value
+from .formulas import formulas
+from .fmt import _n
+from .report import _SECTIONS, _value
 
 
 def _esc(x) -> str:
@@ -207,6 +209,22 @@ def _scaling_section(table) -> str:
     return _section("Scaling (sites x factor)", body)
 
 
+def _formulas_section(p: Params, r: Result) -> str:
+    blocks = []
+    by_section: dict[str, list] = {}
+    for f in formulas(p, r):
+        by_section.setdefault(f.section, []).append([
+            _esc(f.quantity),
+            f"<code>{_esc(f.formula)}</code>",
+            _esc(f.worked),
+            f"<strong>{_esc(f.result)}</strong>",
+        ])
+    for section, rows in by_section.items():
+        blocks.append(f"<h3>{_esc(section)}</h3>" + _table(["Quantity", "Formula", "This run", "Result"], rows))
+    return _section("Formulas", "".join(blocks),
+                     "Each derived number, its formula (as in model.py), and this run's values substituted in.")
+
+
 _CSS = """
 :root{--bg:#fff;--fg:#1a1a1a;--muted:#6b7280;--border:#e5e7eb;--accent:#2563eb;
 --ok:#16a34a;--ok-bg:#dcfce7;--warn:#dc2626;--warn-bg:#fee2e2;--card:#f9fafb}
@@ -242,7 +260,7 @@ footer{color:var(--muted);font-size:0.8rem;margin-top:2.5rem;border-top:1px soli
 """
 
 
-def full_html(p: Params, r: Result, table=None, show_params: bool = True) -> str:
+def full_html(p: Params, r: Result, table=None, show_params: bool = True, show_formulas: bool = True) -> str:
     sections = []
     if show_params:
         sections.append(_params_section(p))
@@ -250,6 +268,8 @@ def full_html(p: Params, r: Result, table=None, show_params: bool = True) -> str
     sections.append(_lakehouse_section(r))
     sections.append(_components_section(r))
     sections.append(_fit_section(p, r))
+    if show_formulas:
+        sections.append(_formulas_section(p, r))
     if table:
         sections.append(_scaling_section(table))
     body = "\n".join(sections)

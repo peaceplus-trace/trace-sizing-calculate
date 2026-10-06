@@ -276,3 +276,37 @@ def test_cli_html_format(capsys):
     out = capsys.readouterr().out
     assert out.startswith("<!doctype html>")
     assert "## Parameters used" not in out        # that's the md section marker, not html's
+
+
+def test_formulas_cover_every_derived_section(r):
+    from trace_sizing.formulas import formulas
+    sections = {f.section for f in formulas(Params(), r)}
+    assert {"IoT", "HSI", "Accumulated", "Data Lake", "ML", "Kafka", "Flink",
+            "Prometheus", "Redis", "VM fit"} <= sections
+
+
+def test_formula_worked_values_match_results(r):
+    from trace_sizing.formulas import formulas
+    by_key = {(f.section, f.quantity): f for f in formulas(Params(), r)}
+    assert by_key[("IoT", "Sensors")].result == "500"
+    assert by_key[("HSI", "Cubes per day (all sites)")].worked.endswith("= 480")
+    assert by_key[("Kafka", "Disk to allocate")].worked.endswith("22.69 GB")   # as in the report
+    assert by_key[("VM fit", "Fits")].result == "FITS"
+
+
+def test_md_report_includes_formulas_by_default(capsys):
+    assert main(["--scale", "none", "--no-params"]) == 0
+    out = capsys.readouterr().out
+    assert "## Formulas" in out
+    assert "`sites x sensors_per_site`" in out
+
+
+def test_cli_no_formulas_hides_section(capsys):
+    assert main(["--scale", "none", "--no-params", "--no-formulas"]) == 0
+    assert "## Formulas" not in capsys.readouterr().out
+
+
+def test_html_report_has_formulas_section(r):
+    out = full_html(Params(), r)
+    assert "<h2>Formulas</h2>" in out
+    assert "<code>sites x sensors_per_site</code>" in out

@@ -65,6 +65,7 @@ Common options:
 |---|---|
 | `--set iot.pilot_sites=5` | Override one parameter (repeatable) |
 | `--scale 0.5,1,2,10` | Scale factors for the scaling table (`none` to skip it) |
+| `--format md` (or `markdown`) | Markdown report; the default. Inferred from `-o report.md` if `--format` is omitted |
 | `--format html` | Single self-contained HTML page (light/dark, collapsible params, usage bars) |
 | `--format json` | Machine-readable output (params + result + scaling) |
 | `--no-params` | Hide the "Parameters used" section (md/html only; json always includes params) |

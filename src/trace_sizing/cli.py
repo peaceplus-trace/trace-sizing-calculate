@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
 import sys
 
 from . import params as params_mod
@@ -41,13 +42,28 @@ def apply_overrides(p: params_mod.Params, overrides: list[str]) -> params_mod.Pa
     return p
 
 
+_EXT_FORMATS = {".md": "md", ".markdown": "md", ".html": "html", ".htm": "html", ".json": "json"}
+
+
+def _resolve_format(fmt: str | None, output: str | None) -> str:
+    """--format wins; otherwise the -o extension; otherwise Markdown."""
+    if fmt:
+        return "md" if fmt == "markdown" else fmt
+    if output:
+        ext = os.path.splitext(output)[1].lower()
+        if ext in _EXT_FORMATS:
+            return _EXT_FORMATS[ext]
+    return "md"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="trace-sizing", description="TRACE WP3 platform sizing calculator")
     ap.add_argument(
         "params", nargs="?",
         help="TOML parameter file, e.g. config/trace_workload.toml (omit to use the TRACE defaults)",
     )
-    ap.add_argument("--format", choices=["md", "html", "json"], default="md")
+    ap.add_argument("--format", choices=["md", "markdown", "html", "json"], default=None,
+                    help="output format; inferred from -o extension (.md, .html, .json) if omitted, else md")
     ap.add_argument("--scale", help="comma-separated scale factors, e.g. 0.5,1,2,10 ('none' to skip)")
     ap.add_argument("--set", action="append", default=[], metavar="SECTION.KEY=VALUE",
                     help="override one parameter, e.g. --set iot.pilot_sites=5 (repeatable)")
@@ -57,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="hide the Formulas section (md/html only)")
     ap.add_argument("-o", "--output", help="write to file instead of stdout")
     args = ap.parse_args(argv)
+    args.format = _resolve_format(args.format, args.output)
 
     p = params_mod.load(args.params) if args.params else params_mod.Params()
     p = apply_overrides(p, args.set)

@@ -373,3 +373,20 @@ def test_storage_section_in_reports(r, capsys):
     assert "Glacier Deep Archive" in out
     assert "<h2>S3 storage by tier" not in out
     assert "<h2>S3 storage by tier" in full_html(Params(), r)
+
+
+def test_format_markdown_alias_and_extension_inference(tmp_path, capsys):
+    assert main(["--format", "markdown", "--scale", "none"]) == 0
+    assert capsys.readouterr().out.startswith("# TRACE sizing report")
+    out_md = tmp_path / "report.md"
+    assert main(["--scale", "none", "-o", str(out_md)]) == 0
+    assert out_md.read_text().startswith("# TRACE sizing report")
+    out_html = tmp_path / "report.html"
+    assert main(["--scale", "none", "-o", str(out_html)]) == 0
+    assert out_html.read_text().startswith("<!doctype html>")
+
+
+def test_explicit_format_overrides_extension(tmp_path):
+    out = tmp_path / "report.md"
+    assert main(["--format", "html", "--scale", "none", "-o", str(out)]) == 0
+    assert out.read_text().startswith("<!doctype html>")

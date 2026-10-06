@@ -122,6 +122,30 @@ def _lakehouse_section(r: Result) -> str:
                      "Informational &mdash; S3/Glue aren't part of the VM fleet, so none of this counts toward VM fit.")
 
 
+def _storage_section(r: Result) -> str:
+    st = r.storage
+    labels = {"standard": "S3 Standard", "glacier_ir": "Glacier Instant Retrieval", "deep_archive": "Glacier Deep Archive"}
+    rows = [[labels[t]] + [f"{_n(m[t] / GB, 1)} GB" for m in st.milestones] for t in ("standard", "glacier_ir", "deep_archive")]
+    totals = [m["standard"] + m["glacier_ir"] + m["deep_archive"] for m in st.milestones]
+    rows.append(["<strong>Total stored</strong>"] + [f"<strong>{_n(t / GB, 1)} GB</strong>" for t in totals])
+    names = {"hsi_raw": "Raw HSI cubes", "iot_raw": "Raw IoT scalar data",
+             "silver": "Silver (incl. overhead)", "gold": "Gold (incl. overhead)"}
+    stream_rows = []
+    for stream in ("hsi_raw", "iot_raw", "silver", "gold"):
+        e = st.end_by_stream[stream]
+        row_total = e["standard"] + e["glacier_ir"] + e["deep_archive"]
+        stream_rows.append([names[stream]] + [f"{_n(e[t] / GB, 1)} GB" for t in ("standard", "glacier_ir", "deep_archive")]
+                           + [f"<strong>{_n(row_total / GB, 1)} GB</strong>"])
+    body = (
+        _table(["Tier"] + [m["label"] for m in st.milestones], rows)
+        + "<h3>At end of project, by stream</h3>"
+        + _table(["Stream", "S3 Standard", "Glacier IR", "Deep Archive", "Total"], stream_rows)
+    )
+    return _section("S3 storage by tier (retention policy)", body,
+                     "Raw HSI: Standard for 60 days, Glacier IR until ~365 days, then Deep Archive. "
+                     "Raw IoT: one tier for life. Silver and Gold: Standard, with versioning overhead.")
+
+
 def _components_section(r: Result) -> str:
     rows = []
     for c in r.components + [r.total]:
@@ -266,6 +290,7 @@ def full_html(p: Params, r: Result, table=None, show_params: bool = True, show_f
         sections.append(_params_section(p))
     sections.append(_workload_section(p, r))
     sections.append(_lakehouse_section(r))
+    sections.append(_storage_section(r))
     sections.append(_components_section(r))
     sections.append(_fit_section(p, r))
     if show_formulas:

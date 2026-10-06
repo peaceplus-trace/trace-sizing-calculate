@@ -104,6 +104,17 @@ predictions_per_sensor_per_day = 24     # written back at Gold's aggregate caden
 predictions_per_hsi_sample = 1
 prediction_bytes = 100
 
+# S3 retention policy: which tier each stream sits in, by age (days).
+# Raw HSI: S3 Standard until hsi_standard_days, Glacier Instant Retrieval until
+# hsi_glacier_ir_until_days, then Deep Archive. Raw IoT: one tier for life
+# (glacier_ir is a shortcut, since it's small). Silver and Gold: Standard for
+# the whole project, plus silver_gold_overhead for versioning and snapshots.
+[storage]
+hsi_standard_days = 60
+hsi_glacier_ir_until_days = 365
+iot_raw_tier = "glacier_ir"       # "standard" | "glacier_ir" | "deep_archive"
+silver_gold_overhead = 0.10
+
 [sizing]
 disk_headroom = 0.5
 os_ram_gb_per_vm = 1

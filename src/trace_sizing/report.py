@@ -148,6 +148,38 @@ def lakehouse_md(r: Result) -> str:
     )
 
 
+def storage_md(r: Result) -> str:
+    st = r.storage
+    labels = {"standard": "S3 Standard", "glacier_ir": "Glacier Instant Retrieval", "deep_archive": "Glacier Deep Archive"}
+    milestone_rows = []
+    for tier in ("standard", "glacier_ir", "deep_archive"):
+        milestone_rows.append([labels[tier]] + [f"{_n(m[tier] / GB, 1)} GB" for m in st.milestones])
+    totals = [m["standard"] + m["glacier_ir"] + m["deep_archive"] for m in st.milestones]
+    milestone_rows.append(["**Total stored**"] + [f"**{_n(t / GB, 1)} GB**" for t in totals])
+    headers = ["Tier"] + [m["label"] for m in st.milestones]
+
+    names = {"hsi_raw": "Raw HSI cubes", "iot_raw": "Raw IoT scalar data",
+             "silver": "Silver (incl. overhead)", "gold": "Gold (incl. overhead)"}
+    stream_rows = []
+    for stream in ("hsi_raw", "iot_raw", "silver", "gold"):
+        e = st.end_by_stream[stream]
+        row_total = e["standard"] + e["glacier_ir"] + e["deep_archive"]
+        stream_rows.append([names[stream]] + [f"{_n(e[t] / GB, 1)} GB" for t in ("standard", "glacier_ir", "deep_archive")]
+                           + [f"**{_n(row_total / GB, 1)} GB**"])
+    return "\n".join([
+        "## S3 storage by tier (retention policy)",
+        "",
+        "_Raw HSI: Standard for the first 60 days, Glacier IR until ~365 days, then Deep Archive. "
+        "Raw IoT: one tier for life (see `[storage]`). Silver and Gold: Standard, with versioning overhead._",
+        "",
+        _table(headers, milestone_rows),
+        "",
+        "**At end of project, by stream**",
+        "",
+        _table(["Stream", "S3 Standard", "Glacier IR", "Deep Archive", "Total"], stream_rows),
+    ])
+
+
 def components_md(r: Result) -> str:
     rows = []
     for c in r.components + [r.total]:
@@ -281,6 +313,7 @@ def full_md(p: Params, r: Result, table=None, show_params: bool = True, show_for
     parts += [
         workload_md(p, r), "",
         lakehouse_md(r), "",
+        storage_md(r), "",
         components_md(r), "",
         fit_md(p, r),
     ]

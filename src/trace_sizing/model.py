@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field
 
 from .params import Params
@@ -124,6 +125,7 @@ class Result:
     components: list[Component]
     total: Component
     fit: Fit
+    storage: StorageTiers
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -241,6 +243,84 @@ def workload(p: Params) -> Workload:
         peak_bytes_per_s=iot.bytes_per_s + hsi.total_bytes_per_s_peak,
         hsi_byte_share=hsi.bytes_per_day / day if day else 0.0,
     )
+
+
+# --------------------------------------------------------------------------- storage tiers
+
+TIERS = ("standard", "glacier_ir", "deep_archive")
+STREAMS = ("hsi_raw", "iot_raw", "silver", "gold")
+
+
+@dataclass
+class StorageTiers:
+    """Stored bytes per S3 tier under the retention policy (see [storage]).
+
+    rates_per_day: calendar-day average ingest per stream (Silver/Gold include
+        the versioning overhead). A stream that runs on operating days only
+        (HSI) is averaged over the calendar year, as in Accumulated.
+    milestones: stored bytes per tier at 2, 12, 24 and project_months.
+    end_by_stream: stream -> tier -> bytes at the end of the project.
+    """
+    rates_per_day: dict[str, float]
+    milestones: list[dict]
+    end_by_stream: dict[str, dict[str, float]]
+
+
+def _held(rate: float, held_from: float, held_to: float, t: float) -> float:
+    """Bytes of a steady stream of `rate`/day that are aged between held_from and
+    held_to days and still stored t days in (ingestion within the last t days)."""
+    return rate * max(0.0, min(held_to, t) - held_from)
+
+
+def _placements(p: Params) -> dict[str, dict[str, tuple[float, float]]]:
+    """For each stream and tier: the (min_age, max_age) window in days."""
+    sp = p.storage
+    s, g, inf = sp.hsi_standard_days, sp.hsi_glacier_ir_until_days, math.inf
+    iot = {t: ((0.0, inf) if t == sp.iot_raw_tier else (0.0, 0.0)) for t in TIERS}
+    return {
+        "hsi_raw": {"standard": (0.0, s), "glacier_ir": (s, g), "deep_archive": (g, inf)},
+        "iot_raw": iot,
+        "silver": {"standard": (0.0, inf), "glacier_ir": (0.0, 0.0), "deep_archive": (0.0, 0.0)},
+        "gold": {"standard": (0.0, inf), "glacier_ir": (0.0, 0.0), "deep_archive": (0.0, 0.0)},
+    }
+
+
+def storage_rates(p: Params, w: Workload) -> dict[str, float]:
+    lh, hsi_days, iot_days = w.lakehouse, p.hsi.operating_days_per_year / 365, p.iot.operating_days_per_year / 365
+    ov = 1 + p.storage.silver_gold_overhead
+    return {
+        "hsi_raw": w.hsi.bytes_per_day * hsi_days,
+        "iot_raw": lh.bronze_iot_bytes_per_day * iot_days,
+        "silver": (lh.silver_hsi_bytes_per_day * hsi_days + lh.silver_iot_bytes_per_day * iot_days) * ov,
+        "gold": (lh.gold_hsi_bytes_per_day * hsi_days + lh.gold_iot_bytes_per_day * iot_days) * ov,
+    }
+
+
+def storage_tiers(p: Params, w: Workload) -> StorageTiers:
+    rates = storage_rates(p, w)
+    place = _placements(p)
+    retention_days = (p.sizing.retention_months * 365 / 12) if p.sizing.retention_months is not None else math.inf
+
+    def at(t_days: float) -> dict[str, dict[str, float]]:
+        t = min(t_days, retention_days)     # data older than retention_months has been deleted
+        return {
+            stream: {tier: _held(rates[stream], *place[stream][tier], t) for tier in TIERS}
+            for stream in STREAMS
+        }
+
+    project_days = p.sizing.project_months * 365 / 12
+    milestones = []
+    for label, months in [("2 months", 2), ("12 months", 12), ("24 months", 24),
+                          (f"{p.sizing.project_months} months (end)", p.sizing.project_months)]:
+        by_stream = at(months * 365 / 12)
+        milestones.append({
+            "label": label,
+            "standard": sum(by_stream[s]["standard"] for s in STREAMS),
+            "glacier_ir": sum(by_stream[s]["glacier_ir"] for s in STREAMS),
+            "deep_archive": sum(by_stream[s]["deep_archive"] for s in STREAMS),
+        })
+    end = at(project_days)
+    return StorageTiers(rates_per_day=rates, milestones=milestones, end_by_stream=end)
 
 
 # --------------------------------------------------------------------------- components
@@ -370,7 +450,7 @@ def calculate(p: Params) -> Result:
         required_ram_gb=total.ram_gb + n * p.sizing.os_ram_gb_per_vm,
         required_disk_gb=total.disk_gb + n * p.sizing.os_disk_gb_per_vm,
     )
-    return Result(workload=w, components=comps, total=total, fit=fit)
+    return Result(workload=w, components=comps, total=total, fit=fit, storage=storage_tiers(p, w))
 
 
 def scaling_table(p: Params, factors: list[float] | None = None) -> list[tuple[float, Params, Result]]:

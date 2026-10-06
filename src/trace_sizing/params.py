@@ -179,6 +179,29 @@ class VM:
 
 
 @dataclass
+class StoragePolicy:
+    """S3 storage tiers (retention policy). Ages are days since ingestion.
+
+    Raw HSI cubes: S3 Standard until hsi_standard_days, Glacier Instant
+    Retrieval until hsi_glacier_ir_until_days, then Deep Archive.
+    Raw scalar (IoT) data: one tier for its whole life (default Glacier IR,
+    a shortcut since it's small). Silver and Gold: S3 Standard for the whole
+    project, plus silver_gold_overhead for versioning and Iceberg snapshots."""
+    hsi_standard_days: float = 60.0
+    hsi_glacier_ir_until_days: float = 365.0
+    iot_raw_tier: str = "glacier_ir"        # "standard" | "glacier_ir" | "deep_archive"
+    silver_gold_overhead: float = 0.10
+
+    def __post_init__(self) -> None:
+        if self.iot_raw_tier not in ("standard", "glacier_ir", "deep_archive"):
+            raise ValueError("[storage] iot_raw_tier must be standard, glacier_ir or deep_archive")
+        if not 0 < self.hsi_standard_days <= self.hsi_glacier_ir_until_days:
+            raise ValueError("[storage] need 0 < hsi_standard_days <= hsi_glacier_ir_until_days")
+        if self.silver_gold_overhead < 0:
+            raise ValueError("[storage] silver_gold_overhead must be >= 0")
+
+
+@dataclass
 class Sizing:
     disk_headroom: float = 0.5             # 45 (+50 %)
     os_ram_gb_per_vm: float = 1.0          # 46
@@ -209,6 +232,7 @@ class Params:
     redis: Redis = field(default_factory=Redis)
     lakehouse: Lakehouse = field(default_factory=Lakehouse)
     ml: MLPipeline = field(default_factory=MLPipeline)
+    storage: StoragePolicy = field(default_factory=StoragePolicy)
     sizing: Sizing = field(default_factory=Sizing)
     extra_components: list[ExtraComponent] = field(default_factory=list)
     vms: list[VM] = field(
@@ -240,6 +264,7 @@ _SECTIONS = {
     "redis": Redis,
     "lakehouse": Lakehouse,
     "ml": MLPipeline,
+    "storage": StoragePolicy,
     "sizing": Sizing,
 }
 

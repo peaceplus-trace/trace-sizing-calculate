@@ -310,3 +310,66 @@ def test_html_report_has_formulas_section(r):
     out = full_html(Params(), r)
     assert "<h2>Formulas</h2>" in out
     assert "<code>sites x sensors_per_site</code>" in out
+
+
+def test_storage_end_of_project_matches_policy(r):
+    end = r.storage.end_by_stream
+    # 60 days Standard, 305 days Glacier IR, 730 days Deep Archive for raw HSI
+    assert end["hsi_raw"]["standard"] / GB == approx(4103, rel=1e-3)
+    assert end["hsi_raw"]["glacier_ir"] / GB == approx(20857, rel=1e-3)
+    assert end["hsi_raw"]["deep_archive"] / GB == approx(49920, rel=1e-3)
+    assert end["iot_raw"]["glacier_ir"] / GB == approx(788.4, rel=1e-3)   # all raw scalar in IR
+    assert sum(end["iot_raw"][t] for t in ("standard", "deep_archive")) == 0
+    # Silver/Gold stay Standard, +10% overhead
+    assert end["silver"]["standard"] / GB == approx(264.3, rel=1e-3)
+    assert end["gold"]["standard"] / GB == approx(1.77, rel=1e-2)
+
+
+def test_storage_total_is_raw_plus_overhead(r):
+    # Over 36 months (1095 days): HSI on 260 of every 365 days, IoT on all 365,
+    # Silver/Gold carry the 10% overhead.
+    lh, w = r.workload.lakehouse, r.workload
+    days = 36 * 365 / 12
+    hsi_raw = w.hsi.bytes_per_day * 260 / 365 * days
+    iot_raw = lh.bronze_iot_bytes_per_day * days
+    silver = (lh.silver_hsi_bytes_per_day * 260 / 365 + lh.silver_iot_bytes_per_day) * days * 1.10
+    gold = (lh.gold_hsi_bytes_per_day * 260 / 365 + lh.gold_iot_bytes_per_day) * days * 1.10
+    end = r.storage.end_by_stream
+    assert sum(end["hsi_raw"].values()) == approx(hsi_raw)
+    assert sum(end["iot_raw"].values()) == approx(iot_raw)
+    assert sum(end["silver"].values()) == approx(silver)
+    assert sum(end["gold"].values()) == approx(gold)
+
+
+def test_storage_milestones_grow_then_deep_archive_starts(r):
+    m = {x["label"].split(" ")[0]: x for x in r.storage.milestones}
+    assert m["2"]["deep_archive"] == 0
+    assert m["12"]["deep_archive"] == 0
+    assert m["24"]["deep_archive"] > 0
+    totals = [x["standard"] + x["glacier_ir"] + x["deep_archive"] for x in r.storage.milestones]
+    assert totals == sorted(totals)
+
+
+def test_storage_retention_cap_deletes_old_data():
+    p = from_dict({"sizing": {"retention_months": 12}})
+    r12 = calculate(p)
+    end = r12.storage.end_by_stream
+    # only the last 12 months survive: no Deep Archive, 365 days of HSI in tiers
+    assert end["hsi_raw"]["deep_archive"] == 0
+    assert end["hsi_raw"]["glacier_ir"] / GB == approx(20857, rel=1e-3)   # 305 days of HSI still in IR
+
+
+def test_storage_validation():
+    with pytest.raises(ValueError, match="iot_raw_tier"):
+        from_dict({"storage": {"iot_raw_tier": "tape"}})
+    with pytest.raises(ValueError, match="hsi_standard_days"):
+        from_dict({"storage": {"hsi_standard_days": 400, "hsi_glacier_ir_until_days": 365}})
+
+
+def test_storage_section_in_reports(r, capsys):
+    assert main(["--scale", "none", "--no-params"]) == 0
+    out = capsys.readouterr().out
+    assert "## S3 storage by tier (retention policy)" in out
+    assert "Glacier Deep Archive" in out
+    assert "<h2>S3 storage by tier" not in out
+    assert "<h2>S3 storage by tier" in full_html(Params(), r)

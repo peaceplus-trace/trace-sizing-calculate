@@ -122,6 +122,11 @@ The 11 system parameters:
 - `[ml]`: the AI/ML Pipeline (Real-time Inference branch) — model artifact size is a fixed,
   versioned store (retraining is periodic, not continuous), while predictions written back to
   the lake are a daily rate tied to sensor count and HSI samples.
+- `[storage]`: the S3 retention policy. Raw HSI stays in S3 Standard for `hsi_standard_days` (60),
+  then Glacier Instant Retrieval until `hsi_glacier_ir_until_days` (365), then Deep Archive.
+  Raw IoT sits in one tier for life (`iot_raw_tier`, default `glacier_ir`). Silver and Gold stay in
+  Standard for the whole project, plus `silver_gold_overhead` (10%) for versioning and Iceberg
+  snapshots. If `sizing.retention_months` is set, data older than that is deleted from every tier.
 - `[[vms]]`: the fleet to check against.
 - `[[extra_components]]`: CKAN, PostgreSQL, Solr, the CKAN Redis instance, MQTT, and anything
   else the model doesn't derive. Add measured figures here so they count toward the totals
@@ -143,6 +148,7 @@ The 11 system parameters:
 | Prometheus RAM | series × 4 KB + 150 MB in use; allocate max(1 GB, 2 × in use) |
 | Accumulated per year | HSI/day × HSI days + IoT/day × IoT days |
 | Retained storage | per-year rate × min(`sizing.retention_months`, `sizing.project_months`) ÷ 12 |
+| Storage in tier at T | stream/day x max(0, min(window end, T) − window start), with windows from `[storage]` |
 | Redis keys | sensors + HSI sites (one "latest" key each) |
 | Bronze | HSI: same as raw. IoT: raw × `bronze_iot_size_ratio` |
 | Silver | HSI: cubes/day × `silver_hsi_kb_per_cube`. IoT: raw × `silver_iot_size_ratio` |

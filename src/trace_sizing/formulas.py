@@ -191,6 +191,40 @@ def formulas(p: Params, r: Result) -> list[Formula]:
         f"{_n(rc.ram_headroom_factor)}) = {_n(rd.ram_gb)} GB",
         f"{_n(rd.ram_gb)} GB")
 
+    # ---- S3 storage tiers (retention policy)
+    sp = p.storage
+    rates = r.storage.rates_per_day
+    t_days = p.sizing.project_months * 365 / 12
+    end = r.storage.end_by_stream
+    hsi_days = p.hsi.operating_days_per_year
+    add("Storage", "Project length in days", "project_months x 365 / 12",
+        f"{_n(p.sizing.project_months)} x 365 / 12 = {_n(t_days, 0)}", _n(t_days, 0))
+    add("Storage", "HSI raw, calendar-day average", "HSI bytes/day x HSI operating_days / 365",
+        f"{_n(w.hsi.bytes_per_day / GB)} GB x {_n(hsi_days)} / 365 = {_n(rates['hsi_raw'] / GB)} GB",
+        f"{_n(rates['hsi_raw'] / GB)} GB/day")
+    add("Storage", "HSI raw in S3 Standard", "HSI/day x min(hsi_standard_days, project days)",
+        f"{_n(rates['hsi_raw'] / GB)} GB x {_n(sp.hsi_standard_days)} = {_n(end['hsi_raw']['standard'] / GB)} GB",
+        f"{_n(end['hsi_raw']['standard'] / GB)} GB")
+    add("Storage", "HSI raw in Glacier Instant Retrieval",
+        "HSI/day x (min(hsi_glacier_ir_until_days, project days) - hsi_standard_days)",
+        f"{_n(rates['hsi_raw'] / GB)} GB x ({_n(sp.hsi_glacier_ir_until_days)} - {_n(sp.hsi_standard_days)}) = "
+        f"{_n(end['hsi_raw']['glacier_ir'] / GB)} GB",
+        f"{_n(end['hsi_raw']['glacier_ir'] / GB)} GB")
+    add("Storage", "HSI raw in Glacier Deep Archive", "HSI/day x (project days - hsi_glacier_ir_until_days)",
+        f"{_n(rates['hsi_raw'] / GB)} GB x ({_n(t_days, 0)} - {_n(sp.hsi_glacier_ir_until_days)}) = "
+        f"{_n(end['hsi_raw']['deep_archive'] / GB)} GB",
+        f"{_n(end['hsi_raw']['deep_archive'] / GB)} GB")
+    tier = sp.iot_raw_tier
+    add("Storage", f"Raw IoT scalar data (all in {tier})", "IoT raw bytes/day x project days",
+        f"{_n(rates['iot_raw'] / GB, 2)} GB x {_n(t_days, 0)} = {_n(end['iot_raw'][tier] / GB)} GB",
+        f"{_n(end['iot_raw'][tier] / GB)} GB")
+    add("Storage", "Silver in S3 Standard (with overhead)",
+        "(Silver HSI/day x HSI days/365 + Silver IoT/day x IoT days/365) x (1 + silver_gold_overhead) x project days",
+        f"({_n(w.lakehouse.silver_hsi_bytes_per_day / MB, 2)} MB x {_n(hsi_days)}/365 + "
+        f"{_n(w.lakehouse.silver_iot_bytes_per_day / MB)} MB x {_n(p.iot.operating_days_per_year)}/365) x "
+        f"(1 + {_n(sp.silver_gold_overhead)}) x {_n(t_days, 0)} = {_n(end['silver']['standard'] / GB)} GB",
+        f"{_n(end['silver']['standard'] / GB)} GB")
+
     # ---- VM fit
     f = r.fit
     n = len(p.vms)

@@ -110,7 +110,7 @@ prediction_bytes = 100
 # (glacier_ir is a shortcut, since it's small). Silver and Gold: Standard for
 # the whole project, plus silver_gold_overhead for versioning and snapshots.
 [storage]
-hsi_standard_days = 60
+hsi_standard_days = 30
 hsi_glacier_ir_until_days = 365
 iot_raw_tier = "glacier_ir"       # "standard" | "glacier_ir" | "deep_archive"
 silver_gold_overhead = 0.10

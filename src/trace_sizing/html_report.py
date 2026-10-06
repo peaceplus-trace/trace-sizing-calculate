@@ -122,8 +122,9 @@ def _lakehouse_section(r: Result) -> str:
                      "Informational &mdash; S3/Glue aren't part of the VM fleet, so none of this counts toward VM fit.")
 
 
-def _storage_section(r: Result) -> str:
+def _storage_section(p: Params, r: Result) -> str:
     st = r.storage
+    sp = p.storage
     labels = {"standard": "S3 Standard", "glacier_ir": "Glacier Instant Retrieval", "deep_archive": "Glacier Deep Archive"}
     rows = [[labels[t]] + [f"{_n(m[t] / GB, 1)} GB" for m in st.milestones] for t in ("standard", "glacier_ir", "deep_archive")]
     totals = [m["standard"] + m["glacier_ir"] + m["deep_archive"] for m in st.milestones]
@@ -142,8 +143,10 @@ def _storage_section(r: Result) -> str:
         + _table(["Stream", "S3 Standard", "Glacier IR", "Deep Archive", "Total"], stream_rows)
     )
     return _section("S3 storage by tier (retention policy)", body,
-                     "Raw HSI: Standard for 60 days, Glacier IR until ~365 days, then Deep Archive. "
-                     "Raw IoT: one tier for life. Silver and Gold: Standard, with versioning overhead.")
+                     f"Raw HSI: Standard for the first {_n(sp.hsi_standard_days)} days, Glacier IR until "
+                     f"{_n(sp.hsi_glacier_ir_until_days)} days, then Deep Archive. "
+                     f"Raw IoT: {_esc(sp.iot_raw_tier)} for its whole life. "
+                     f"Silver and Gold: Standard, with {_n(sp.silver_gold_overhead * 100)}% versioning overhead.")
 
 
 def _components_section(r: Result) -> str:
@@ -290,7 +293,7 @@ def full_html(p: Params, r: Result, table=None, show_params: bool = True, show_f
         sections.append(_params_section(p))
     sections.append(_workload_section(p, r))
     sections.append(_lakehouse_section(r))
-    sections.append(_storage_section(r))
+    sections.append(_storage_section(p, r))
     sections.append(_components_section(r))
     sections.append(_fit_section(p, r))
     if show_formulas:

@@ -148,8 +148,9 @@ def lakehouse_md(r: Result) -> str:
     )
 
 
-def storage_md(r: Result) -> str:
+def storage_md(p: Params, r: Result) -> str:
     st = r.storage
+    sp = p.storage
     labels = {"standard": "S3 Standard", "glacier_ir": "Glacier Instant Retrieval", "deep_archive": "Glacier Deep Archive"}
     milestone_rows = []
     for tier in ("standard", "glacier_ir", "deep_archive"):
@@ -169,8 +170,10 @@ def storage_md(r: Result) -> str:
     return "\n".join([
         "## S3 storage by tier (retention policy)",
         "",
-        "_Raw HSI: Standard for the first 60 days, Glacier IR until ~365 days, then Deep Archive. "
-        "Raw IoT: one tier for life (see `[storage]`). Silver and Gold: Standard, with versioning overhead._",
+        f"_Raw HSI: Standard for the first {_n(sp.hsi_standard_days)} days, Glacier IR until "
+        f"{_n(sp.hsi_glacier_ir_until_days)} days, then Deep Archive. "
+        f"Raw IoT: {sp.iot_raw_tier} for its whole life. "
+        f"Silver and Gold: Standard, with {_n(sp.silver_gold_overhead * 100)}% versioning overhead._",
         "",
         _table(headers, milestone_rows),
         "",
@@ -313,7 +316,7 @@ def full_md(p: Params, r: Result, table=None, show_params: bool = True, show_for
     parts += [
         workload_md(p, r), "",
         lakehouse_md(r), "",
-        storage_md(r), "",
+        storage_md(p, r), "",
         components_md(r), "",
         fit_md(p, r),
     ]

@@ -1,5 +1,6 @@
 """Expected values are the hand calculations in the TRACE WP3 cost-estimate doc."""
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -184,7 +185,10 @@ def test_100x_grows_flink_and_prometheus():
 
 
 def test_config_file_equals_defaults():
-    assert load(CONFIG / "trace_workload.toml") == Params()
+    """The shipped config matches the built-in defaults, except [storage], which
+    is the retention policy the user sets on purpose."""
+    loaded = dataclasses.replace(load(CONFIG / "trace_workload.toml"), storage=Params().storage)
+    assert loaded == Params()
 
 
 def test_cube_from_dimensions():
@@ -342,10 +346,10 @@ def test_storage_total_is_raw_plus_overhead(r):
 
 
 def test_storage_milestones_grow_then_deep_archive_starts(r):
-    m = {x["label"].split(" ")[0]: x for x in r.storage.milestones}
-    assert m["2"]["deep_archive"] == 0
-    assert m["12"]["deep_archive"] == 0
-    assert m["24"]["deep_archive"] > 0
+    by_months = {x["months"]: x for x in r.storage.milestones}
+    assert list(by_months) == [12, 24, 36]
+    assert by_months[12]["deep_archive"] == 0          # nothing older than a year yet
+    assert by_months[24]["deep_archive"] > 0
     totals = [x["standard"] + x["glacier_ir"] + x["deep_archive"] for x in r.storage.milestones]
     assert totals == sorted(totals)
 

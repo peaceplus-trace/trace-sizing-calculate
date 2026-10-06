@@ -258,7 +258,7 @@ class StorageTiers:
     rates_per_day: calendar-day average ingest per stream (Silver/Gold include
         the versioning overhead). A stream that runs on operating days only
         (HSI) is averaged over the calendar year, as in Accumulated.
-    milestones: stored bytes per tier at 2, 12, 24 and project_months.
+    milestones: stored bytes per tier at the end of each project year (and the project end).
     end_by_stream: stream -> tier -> bytes at the end of the project.
     """
     rates_per_day: dict[str, float]
@@ -310,11 +310,16 @@ def storage_tiers(p: Params, w: Workload) -> StorageTiers:
 
     project_days = p.sizing.project_months * 365 / 12
     milestones = []
-    for label, months in [("2 months", 2), ("12 months", 12), ("24 months", 24),
-                          (f"{p.sizing.project_months} months (end)", p.sizing.project_months)]:
+    n_months = p.sizing.project_months
+    points = [12 * k for k in range(1, n_months // 12 + 1)]
+    if not points or points[-1] != n_months:
+        points.append(n_months)
+    for months in points:
+        label = f"End of year {months // 12}" if months % 12 == 0 else f"End of project ({months} months)"
         by_stream = at(months * 365 / 12)
         milestones.append({
             "label": label,
+            "months": months,
             "standard": sum(by_stream[s]["standard"] for s in STREAMS),
             "glacier_ir": sum(by_stream[s]["glacier_ir"] for s in STREAMS),
             "deep_archive": sum(by_stream[s]["deep_archive"] for s in STREAMS),

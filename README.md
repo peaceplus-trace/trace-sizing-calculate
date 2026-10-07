@@ -78,6 +78,19 @@ Example: what changes if HSI runs at 3 sites with 100 MB cubes, 20 samples/day?
 trace-sizing --set hsi.sites_with_camera=3 --set hsi.cube_mb=100 --set hsi.samples_per_day=20
 ```
 
+### Sharing a link to part of the HTML report
+
+Every section, sub-heading and table row in the HTML report has an `id`. Hover over one and
+click the `#` that appears: the page copies a link to that element, e.g.
+`https://peaceplus-trace.github.io/trace-sizing-calculate/#storage--deep-archive`. Opening the
+link scrolls to the element, highlights it, and expands the Parameters section if it's inside.
+
+Ids come from fixed keys, not displayed values, so links keep working after the config
+changes and the report is regenerated. Examples: `#storage`, `#storage--by-stream--hsi-raw`,
+`#components--kafka`, `#vm-fit--disk`, `#params--storage--hsi-standard-days`,
+`#formulas--kafka--disk-to-allocate`. A link breaks only if what it points to is removed or
+renamed in the code.
+
 ## Parameter file
 
 The parameter file is TOML. [config/trace_workload.toml](config/trace_workload.toml)

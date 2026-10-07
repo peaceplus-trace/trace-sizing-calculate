@@ -238,7 +238,7 @@ def test_cli_markdown(capsys):
 def test_params_md_renders_every_section():
     out = params_md(Params())
     for section in ["iot", "hsi", "kafka", "flink", "prometheus", "grafana",
-                     "alerting", "redis", "lakehouse", "ml", "sizing"]:
+                     "alerting", "redis", "lakehouse", "ml", "storage", "sizing"]:
         assert f"**[{section}]**" in out
     assert "| pilot_sites | 10 |" in out
     assert "| pixels | none |" in out        # None -> "none", not "None" or blank
@@ -261,7 +261,7 @@ def test_full_html_well_formed_and_matches_md_numbers(r):
     out = full_html(Params(), r)
     assert out.startswith("<!doctype html>")
     assert out.count("<table>") == out.count("</table>")
-    assert out.count("<section>") == out.count("</section>")
+    assert out.count("<section ") == out.count("</section>")
     assert "<h1>TRACE sizing report</h1>" in out
     assert ">FITS<" in out                      # VM fit badge
     assert "<td>16.67 msg/s</td>" in out         # same number as the md report
@@ -312,7 +312,7 @@ def test_cli_no_formulas_hides_section(capsys):
 
 def test_html_report_has_formulas_section(r):
     out = full_html(Params(), r)
-    assert "<h2>Formulas</h2>" in out
+    assert '<section id="formulas"><h2>Formulas<a class="anchor" href="#formulas"' in out
     assert "<code>sites x sensors_per_site</code>" in out
 
 
@@ -394,3 +394,32 @@ def test_explicit_format_overrides_extension(tmp_path):
     out = tmp_path / "report.md"
     assert main(["--format", "html", "--scale", "none", "-o", str(out)]) == 0
     assert out.read_text().startswith("<!doctype html>")
+
+
+def test_html_ids_are_unique_and_every_anchor_resolves(r):
+    import re
+    out = full_html(Params(), r, scaling_table(Params(), [1, 10]))
+    ids = re.findall(r'\sid="([^"]+)"', out)
+    assert len(ids) == len(set(ids)), "duplicate ids"
+    targets = set(re.findall(r'class="anchor" href="#([^"]+)"', out))
+    assert targets and targets <= set(ids)
+    for eid in ["params", "params--storage--hsi-standard-days", "workload--rates--hsi",
+                "storage--deep-archive", "storage--by-stream--hsi-raw", "components--kafka",
+                "vm-fit--disk", "formulas--kafka--disk-to-allocate", "scaling--10x"]:
+        assert f'id="{eid}"' in out, eid
+
+
+def test_html_ids_stable_when_values_change():
+    import re
+    def ids(p):
+        return set(re.findall(r'\sid="([^"]+)"', full_html(p, calculate(p))))
+    base = ids(Params())
+    changed = ids(from_dict({"hsi": {"upload_window_hours_per_day": 6},
+                             "sizing": {"project_months": 36, "retention_months": 12},
+                             "kafka": {"brokers": 5, "replication_factor": 2}}))
+    assert base == changed
+
+
+def test_html_has_copy_link_script(r):
+    out = full_html(Params(), r)
+    assert '<div id="toast"' in out and "navigator.clipboard" in out

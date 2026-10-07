@@ -29,7 +29,7 @@ def _value(x) -> str:
 
 
 _SECTIONS = ["iot", "hsi", "kafka", "flink", "prometheus", "grafana",
-             "alerting", "redis", "lakehouse", "ml", "sizing"]
+             "alerting", "redis", "lakehouse", "ml", "storage", "sizing"]
 
 
 def params_md(p: Params) -> str:

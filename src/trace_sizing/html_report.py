@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import html as _html
+import re
 
 from .model import GB, MB, Result
 from .params import Params
@@ -21,18 +22,50 @@ def _esc(x) -> str:
     return _html.escape(str(x))
 
 
-def _table(headers: list[str], rows: list[list[str]]) -> str:
+def _slug(text: str) -> str:
+    """Stable, URL-safe id fragment from a label (tags and entities stripped)."""
+    plain = _html.unescape(re.sub(r"<[^>]+>", "", str(text))).lower()
+    return re.sub(r"[^a-z0-9]+", "-", plain).strip("-") or "item"
+
+
+def _anchor(eid: str) -> str:
+    return f'<a class="anchor" href="#{eid}" title="Copy link to this" aria-label="Copy link to this">#</a>'
+
+
+def _h3(text: str, parent: str, key: str | None = None) -> str:
+    eid = f"{parent}--{key or _slug(text)}"
+    return f'<h3 id="{eid}">{_esc(text)}{_anchor(eid)}</h3>'
+
+
+def _table(headers: list[str], rows: list[list[str]], tid: str | None = None,
+           keys: list[str] | None = None) -> str:
+    """With `tid`, every row gets id `tid--key` and a copy-link anchor. Keys
+    default to the first cell's text; pass `keys` where that text contains
+    values that change between runs, so shared links stay valid."""
     thead = "".join(f"<th>{_esc(h)}</th>" for h in headers)
-    tbody = "".join(
-        "<tr>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>"
-        for row in rows
-    )
-    return f'<div class="wrap"><table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table></div>'
+    body_rows, seen = [], {}
+    for i, row in enumerate(rows):
+        if tid:
+            key = keys[i] if keys else _slug(row[0])
+            seen[key] = seen.get(key, 0) + 1
+            if seen[key] > 1:
+                key = f"{key}-{seen[key]}"
+            eid = f"{tid}--{key}"
+            first = f"{_anchor(eid)}{row[0]}"
+            cells = "".join(f"<td>{c}</td>" for c in [first] + row[1:])
+            body_rows.append(f'<tr id="{eid}">{cells}</tr>')
+        else:
+            body_rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>")
+    return (f'<div class="wrap"><table><thead><tr>{thead}</tr></thead>'
+            f'<tbody>{"".join(body_rows)}</tbody></table></div>')
 
 
-def _section(title: str, body: str, note: str = "") -> str:
+def _section(title: str, body: str, note: str = "", sid: str | None = None,
+             title_html: str | None = None) -> str:
+    sid = sid or _slug(title)
     note_html = f'<p class="note">{note}</p>' if note else ""
-    return f'<section><h2>{_esc(title)}</h2>{note_html}{body}</section>'
+    heading = title_html if title_html is not None else _esc(title)
+    return f'<section id="{sid}"><h2>{heading}{_anchor(sid)}</h2>{note_html}{body}</section>'
 
 
 def _params_section(p: Params) -> str:
@@ -41,18 +74,22 @@ def _params_section(p: Params) -> str:
         obj = getattr(p, name)
         rows = [[f"<code>{_esc(f.name)}</code>", _esc(_value(getattr(obj, f.name)))]
                 for f in dataclasses.fields(obj)]
-        blocks.append(f"<h3>[{_esc(name)}]</h3>" + _table(["Key", "Value"], rows))
+        blocks.append(_h3(f"[{name}]", "params", _slug(name))
+                      + _table(["Key", "Value"], rows, tid=f"params--{name}",
+                               keys=[_slug(f.name) for f in dataclasses.fields(obj)]))
     if p.vms:
         rows = [[_esc(v.name), _esc(_n(v.vcpu)), f"{_esc(_n(v.ram_gib))} GiB", f"{_esc(_n(v.disk_gb))} GB"]
                 for v in p.vms]
-        blocks.append("<h3>[[vms]]</h3>" + _table(["Name", "vCPU", "RAM", "Disk"], rows))
+        blocks.append(_h3("[[vms]]", "params", "vms")
+                      + _table(["Name", "vCPU", "RAM", "Disk"], rows, tid="params--vms"))
     if p.extra_components:
         rows = [[_esc(e.name), _esc(_n(e.vcpu)), f"{_esc(_n(e.ram_gb))} GB", f"{_esc(_n(e.disk_gb))} GB"]
                 for e in p.extra_components]
-        blocks.append("<h3>[[extra_components]]</h3>" + _table(["Name", "vCPU", "RAM", "Disk"], rows))
+        blocks.append(_h3("[[extra_components]]", "params", "extra-components")
+                      + _table(["Name", "vCPU", "RAM", "Disk"], rows, tid="params--extra-components"))
     body = f"<details><summary>Show all {len(_SECTIONS)} sections</summary>{''.join(blocks)}</details>"
     return _section("Parameters used", body,
-                     "Every resolved input value - the TOML file plus any --set overrides.")
+                     "Every resolved input value - the TOML file plus any --set overrides.", sid="params")
 
 
 def _workload_section(p: Params, r: Result) -> str:
@@ -88,11 +125,13 @@ def _workload_section(p: Params, r: Result) -> str:
         f"{_n(h.cubes_per_day)} cubes/day across {_n(p.hsi.sites_with_camera)} camera sites</li>"
         f"<li>HSI share of bytes: {_n(w.hsi_byte_share * 100, 1)} %</li>"
         "</ul>"
-        + _table(["", "Write rate", "Throughput", "Daily volume"], rate_rows)
-        + "<h3>Accumulated raw volume (S3)</h3>"
-        + _table(["Period", "Volume"], accum_rows)
+        + _table(["", "Write rate", "Throughput", "Daily volume"], rate_rows,
+                 tid="workload--rates", keys=["iot", "hsi", "total"])
+        + _h3("Accumulated raw volume (S3)", "workload", "accumulated")
+        + _table(["Period", "Volume"], accum_rows, tid="workload--accumulated",
+                 keys=["1-day", "1-month", "1-year", "project-total", "retained"])
     )
-    return _section("Workload", body)
+    return _section("Workload", body, sid="workload")
 
 
 def _lakehouse_section(r: Result) -> str:
@@ -106,7 +145,7 @@ def _lakehouse_section(r: Result) -> str:
          f"{_n(lh.gold_iot_bytes_per_day / MB)} MB", f"{_n(lh.gold_bytes_per_day / MB)} MB"],
     ]
     body = (
-        _table(["Layer", "HSI", "IoT", "Total/day"], rows)
+        _table(["Layer", "HSI", "IoT", "Total/day"], rows, tid="data-lake", keys=["bronze", "silver", "gold"])
         + "<ul>"
         + f"<li>Iceberg metadata: {_n(lh.iceberg_commits_per_day, 0)} commits/day across the "
           f"Bronze/Silver/Gold tables, {_n(lh.iceberg_objects_per_day, 0)} new objects/day, "
@@ -119,7 +158,8 @@ def _lakehouse_section(r: Result) -> str:
         + "</ul>"
     )
     return _section("Data Lake pipeline & ML (Bronze/Silver/Gold)", body,
-                     "Informational &mdash; S3/Glue aren't part of the VM fleet, so none of this counts toward VM fit.")
+                     "Informational &mdash; S3/Glue aren't part of the VM fleet, so none of this counts toward VM fit.",
+                     sid="data-lake")
 
 
 def _storage_section(p: Params, r: Result) -> str:
@@ -138,15 +178,18 @@ def _storage_section(p: Params, r: Result) -> str:
         stream_rows.append([names[stream]] + [f"{_n(e[t] / GB, 1)} GB" for t in ("standard", "glacier_ir", "deep_archive")]
                            + [f"<strong>{_n(row_total / GB, 1)} GB</strong>"])
     body = (
-        _table(["Tier"] + [m["label"] for m in st.milestones], rows)
-        + "<h3>At end of project, by stream</h3>"
-        + _table(["Stream", "S3 Standard", "Glacier IR", "Deep Archive", "Total"], stream_rows)
+        _table(["Tier"] + [m["label"] for m in st.milestones], rows, tid="storage",
+               keys=["standard", "glacier-ir", "deep-archive", "total"])
+        + _h3("At end of project, by stream", "storage", "by-stream")
+        + _table(["Stream", "S3 Standard", "Glacier IR", "Deep Archive", "Total"], stream_rows,
+                 tid="storage--by-stream", keys=["hsi-raw", "iot-raw", "silver", "gold"])
     )
     return _section("S3 storage by tier (retention policy)", body,
                      f"Raw HSI: Standard for the first {_n(sp.hsi_standard_days)} days, Glacier IR until "
                      f"{_n(sp.hsi_glacier_ir_until_days)} days, then Deep Archive. "
                      f"Raw IoT: {_esc(sp.iot_raw_tier)} for its whole life. "
-                     f"Silver and Gold: Standard, with {_n(sp.silver_gold_overhead * 100)}% versioning overhead.")
+                     f"Silver and Gold: Standard, with {_n(sp.silver_gold_overhead * 100)}% versioning overhead.",
+                     sid="storage")
 
 
 def _components_section(r: Result) -> str:
@@ -173,10 +216,12 @@ def _components_section(r: Result) -> str:
         elif c.name.startswith("Redis"):
             notes.append(f"Redis: {_n(c.notes['keys'], 0)} keys, overwritten in place")
     body = (
-        _table(["Component", "CPU (load)", "vCPU (allocate)", "RAM (allocate)", "Data stored", "Disk (w/ headroom)"], rows)
+        _table(["Component", "CPU (load)", "vCPU (allocate)", "RAM (allocate)", "Data stored", "Disk (w/ headroom)"],
+               rows, tid="components",
+               keys=[_slug(c.name.split("(")[0]) for c in r.components] + ["total"])
         + "<ul>" + "".join(f"<li>{n}</li>" for n in notes) + "</ul>"
     )
-    return _section("Component sizing", body)
+    return _section("Component sizing", body, sid="components")
 
 
 def _bar(pct: float) -> str:
@@ -206,13 +251,14 @@ def _fit_section(p: Params, r: Result) -> str:
     vms = ", ".join(f"{_esc(v.name)} ({_n(v.vcpu)} vCPU / {_n(v.ram_gib)} GiB / {_n(v.disk_gb)} GB)" for v in p.vms)
     body = (
         f'<p>Fleet: {vms}</p>'
-        + _table(["Resource", "Required (incl. OS)", "Capacity", "Remaining", "Used"], rows)
+        + _table(["Resource", "Required (incl. OS)", "Capacity", "Remaining", "Used"], rows,
+                 tid="vm-fit", keys=["vcpu", "ram", "disk"])
         + f'<p class="note">OS overhead: {_n(p.sizing.os_ram_gb_per_vm)} GB RAM + '
           f'{_n(p.sizing.os_disk_gb_per_vm)} GB disk per VM. Components not modelled (CKAN, PostgreSQL, '
           'Solr, the CKAN Redis instance, MQTT, API) are only counted if listed under [[extra_components]].</p>'
     )
     title_html = f'VM fit: <span class="badge {badge_cls}">{badge_text}</span>'
-    return f'<section><h2>{title_html}</h2>{body}</section>'
+    return _section("VM fit", body, sid="vm-fit", title_html=title_html)
 
 
 def _scaling_section(table) -> str:
@@ -231,15 +277,17 @@ def _scaling_section(table) -> str:
     body = _table(
         ["Scale", "Sensors (sites)", "Msg/s", "HSI/day", "Kafka disk/broker", "Prom series",
          "CPU load", "vCPU", "RAM", "Disk", "Fits VMs"],
-        rows,
+        rows, tid="scaling",
     )
-    return _section("Scaling (sites x factor)", body)
+    return _section("Scaling (sites x factor)", body, sid="scaling")
 
 
 def _formulas_section(p: Params, r: Result) -> str:
     blocks = []
     by_section: dict[str, list] = {}
+    keys: dict[str, list] = {}
     for f in formulas(p, r):
+        keys.setdefault(f.section, []).append(_slug(f.quantity.split("(")[0]))
         by_section.setdefault(f.section, []).append([
             _esc(f.quantity),
             f"<code>{_esc(f.formula)}</code>",
@@ -247,9 +295,13 @@ def _formulas_section(p: Params, r: Result) -> str:
             f"<strong>{_esc(f.result)}</strong>",
         ])
     for section, rows in by_section.items():
-        blocks.append(f"<h3>{_esc(section)}</h3>" + _table(["Quantity", "Formula", "This run", "Result"], rows))
+        sk = _slug(section)
+        blocks.append(_h3(section, "formulas", sk)
+                      + _table(["Quantity", "Formula", "This run", "Result"], rows,
+                               tid=f"formulas--{sk}", keys=keys[section]))
     return _section("Formulas", "".join(blocks),
-                     "Each derived number, its formula (as in model.py), and this run's values substituted in.")
+                     "Each derived number, its formula (as in model.py), and this run's values substituted in.",
+                     sid="formulas")
 
 
 _CSS = """
@@ -283,7 +335,55 @@ border-radius:4px;overflow:hidden;vertical-align:middle;margin-right:0.5rem}
 .bar-fill.over{background:var(--warn)}
 .bar-label{font-variant-numeric:tabular-nums}
 details summary{cursor:pointer;font-weight:600;color:var(--accent);margin:0.6rem 0}
+section,h3,tr{scroll-margin-top:1rem}
+.anchor{margin-left:0.4rem;color:var(--muted);text-decoration:none;font-weight:400;opacity:0;transition:opacity .15s}
+td .anchor{margin:0 0.35rem 0 0}
+h2:hover .anchor,h3:hover .anchor,tr:hover .anchor,.anchor:focus{opacity:1}
+@media (hover:none){.anchor{opacity:.6}}
+.anchor:hover{color:var(--accent)}
+:root{--hl:#fef3c7}
+@media (prefers-color-scheme:dark){:root{--hl:#3a3110}}
+tr:target td,tr.flash td{background:var(--hl)}
+section:target>h2,h3:target{background:var(--hl);border-radius:4px}
+#toast{position:fixed;bottom:1.2rem;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);
+padding:0.45rem 0.9rem;border-radius:6px;font-size:0.85rem;opacity:0;pointer-events:none;transition:opacity .2s}
+#toast.show{opacity:1}
 footer{color:var(--muted);font-size:0.8rem;margin-top:2.5rem;border-top:1px solid var(--border);padding-top:1rem}
+"""
+
+
+_JS = """
+(function () {
+  var toast = document.getElementById("toast"), t;
+  function show(msg) {
+    toast.textContent = msg; toast.classList.add("show");
+    clearTimeout(t); t = setTimeout(function () { toast.classList.remove("show"); }, 1800);
+  }
+  function reveal(id) {
+    var el = id && document.getElementById(id);
+    if (!el) return;
+    for (var p = el.parentElement; p; p = p.parentElement) if (p.tagName === "DETAILS") p.open = true;
+    el.scrollIntoView({block: "center"});
+  }
+  function copy(text) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    var ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta);
+    ta.select(); try { document.execCommand("copy"); } finally { ta.remove(); }
+    return Promise.resolve();
+  }
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest("a.anchor");
+    if (!a) return;
+    e.preventDefault();
+    var id = a.getAttribute("href").slice(1);
+    history.replaceState(null, "", "#" + id);
+    reveal(id);
+    var url = location.href;
+    copy(url).then(function () { show("Link copied"); }, function () { show(url); });
+  });
+  window.addEventListener("hashchange", function () { reveal(decodeURIComponent(location.hash.slice(1))); });
+  if (location.hash) reveal(decodeURIComponent(location.hash.slice(1)));
+})();
 """
 
 
@@ -314,6 +414,8 @@ def full_html(p: Params, r: Result, table=None, show_params: bool = True, show_f
 <h1>TRACE sizing report</h1>
 <p class="subtitle">Pilot: {_n(p.iot.pilot_sites)} sites &middot; {_n(p.iot.sensors_per_site)} sensors/site &middot; {_n(p.hsi.sites_with_camera)} HSI camera sites</p>
 {body}
+<div id="toast" role="status" aria-live="polite"></div>
+<script>{_JS}</script>
 <footer>Generated by trace-sizing. Tables render best in a modern browser; this page has no external dependencies.</footer>
 </main>
 </body>

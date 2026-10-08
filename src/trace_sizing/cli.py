@@ -15,6 +15,7 @@ import sys
 from . import params as params_mod
 from .formulas import formulas
 from .html_report import full_html
+from .htmlkit import parse_links
 from .cost import estimate, load_config as load_cost_config, usage_from_sizing
 from .model import calculate, scaling_table
 from .report import full_md
@@ -79,6 +80,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cost-config", metavar="PATH",
                     help="cost config for the cost section (default: config/cost.toml if it exists)")
     ap.add_argument("--no-cost", action="store_true", help="leave out the cost section")
+    ap.add_argument("--link", action="append", default=[], metavar="LABEL=URL",
+                    help="add a link to a related page in the html output's top bar, e.g. "
+                         "--link 'Cost estimate=cost.html' (repeatable; the -o file is marked current)")
     ap.add_argument("-o", "--output", help="write to file instead of stdout")
     args = ap.parse_args(argv)
     args.format = _resolve_format(args.format, args.output)
@@ -116,8 +120,12 @@ def main(argv: list[str] | None = None) -> int:
         }
         text = json.dumps(doc, indent=2) + "\n"
     elif args.format == "html":
+        try:
+            links = parse_links(args.link)
+        except ValueError as e:
+            raise SystemExit(f"trace-sizing: {e}")
         text = full_html(p, result, table, show_params=not args.no_params, show_formulas=not args.no_formulas,
-                         cost=cost)
+                         cost=cost, nav=links, current=os.path.basename(args.output) if args.output else None)
     else:
         text = full_md(p, result, table, show_params=not args.no_params, show_formulas=not args.no_formulas,
                        cost=cost)

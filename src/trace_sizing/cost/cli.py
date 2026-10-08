@@ -15,6 +15,7 @@ from typing import Any
 
 from . import config as cost_config
 from .estimate import estimate
+from ..htmlkit import parse_links
 from .render import cost_page_html, cost_page_md
 from .usage import load_usage
 
@@ -62,6 +63,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="override a price, e.g. glue_dpu_hour=0.308 or vm_hourly.m7g.2xlarge=0.36 (repeatable)")
     ap.add_argument("--format", choices=["md", "markdown", "html", "json"],
                     help="output format; inferred from -o extension, else md")
+    ap.add_argument("--link", action="append", default=[], metavar="LABEL=URL",
+                    help="add a link to a related page in the html output's top bar, e.g. "
+                         "--link 'Cost estimate=cost.html' (repeatable; the -o file is marked current)")
     ap.add_argument("-o", "--output", help="write to a file instead of stdout")
     ap.add_argument("--emit-usage", metavar="PATH", help="also write the usage actually priced (after VM overrides)")
     args = ap.parse_args(argv)
@@ -99,7 +103,11 @@ def main(argv: list[str] | None = None) -> int:
         import json
         text = json.dumps(result.to_dict(), indent=2) + "\n"
     elif fmt == "html":
-        text = cost_page_html(result)
+        try:
+            links = parse_links(args.link)
+        except ValueError as e:
+            raise SystemExit(f"trace-cost: {e}")
+        text = cost_page_html(result, nav=links, current=os.path.basename(args.output) if args.output else None)
     else:
         text = cost_page_md(result)
 

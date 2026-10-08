@@ -105,6 +105,10 @@ section:target>h2,h3:target{background:var(--hl);border-radius:4px}
 #toast{position:fixed;bottom:1.2rem;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);
 padding:0.45rem 0.9rem;border-radius:6px;font-size:0.85rem;opacity:0;pointer-events:none;transition:opacity .2s}
 #toast.show{opacity:1}
+.topnav{display:flex;flex-wrap:wrap;gap:0.25rem;margin:0 0 1rem;padding-bottom:0.6rem;border-bottom:1px solid var(--border)}
+.topnav a{color:var(--accent);text-decoration:none;padding:0.25rem 0.6rem;border-radius:6px;font-size:0.9rem}
+.topnav a:hover{background:var(--card)}
+.topnav a[aria-current="page"]{background:var(--card);color:var(--fg);font-weight:600}
 footer{color:var(--muted);font-size:0.8rem;margin-top:2.5rem;border-top:1px solid var(--border);padding-top:1rem}
 """
 
@@ -144,8 +148,33 @@ _JS = """
 """
 
 
-def page(title: str, subtitle: str, body: str, footer: str) -> str:
-    """A complete, dependency-free HTML page."""
+def parse_links(specs: list[str]) -> list[tuple[str, str]]:
+    """--link LABEL=URL values -> [(label, url)]. Raises ValueError on a bad spec."""
+    out = []
+    for spec in specs:
+        label, sep, url = spec.partition("=")
+        if not sep or not label.strip() or not url.strip():
+            raise ValueError(f"--link expects LABEL=URL, got {spec!r}")
+        out.append((label.strip(), url.strip()))
+    return out
+
+
+def nav_html(links: list[tuple[str, str]] | None, current: str | None = None) -> str:
+    """A row of links between related pages; the one whose href is `current`
+    is marked as the page you're on."""
+    if not links:
+        return ""
+    items = []
+    for label, href in links:
+        here = current is not None and href == current
+        attr = ' aria-current="page"' if here else ""
+        items.append(f'<a href="{_esc(href)}"{attr}>{_esc(label)}</a>')
+    return f'<nav class="topnav" aria-label="Report pages">{"".join(items)}</nav>'
+
+
+def page(title: str, subtitle: str, body: str, footer: str,
+         nav: list[tuple[str, str]] | None = None, current: str | None = None) -> str:
+    """A complete, dependency-free HTML page, optionally with links to sibling pages."""
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -156,6 +185,7 @@ def page(title: str, subtitle: str, body: str, footer: str) -> str:
 </head>
 <body>
 <main>
+{nav_html(nav, current)}
 <h1>{_esc(title)}</h1>
 <p class="subtitle">{subtitle}</p>
 {body}

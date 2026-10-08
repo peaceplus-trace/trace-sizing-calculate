@@ -616,3 +616,24 @@ def test_cost_in_reports(r, capsys, cost):
     d = json.loads(capsys.readouterr().out)
     assert d["usage"]["schema"] == "trace-usage/1"
     assert d["cost"]["summary"]["total_usd"] == approx(cost.total_usd)
+
+def test_nav_links_on_both_pages(tmp_path):
+    links = ["--link", "Sizing report=index.html", "--link", "Cost estimate=cost.html"]
+    index, cost_page, report = tmp_path / "index.html", tmp_path / "cost.html", tmp_path / "report.json"
+    assert main([str(CONFIG / "trace_workload.toml"), "--scale", "none", "-o", str(index)] + links) == 0
+    assert main([str(CONFIG / "trace_workload.toml"), "--scale", "none", "-o", str(report)]) == 0
+    assert cost_main([str(report), "--config", str(CONFIG / "cost.toml"), "-o", str(cost_page)] + links) == 0
+    i, c = index.read_text(), cost_page.read_text()
+    for html_, here, other in [(i, "index.html", "cost.html"), (c, "cost.html", "index.html")]:
+        assert '<nav class="topnav"' in html_
+        assert f'<a href="{here}" aria-current="page">' in html_
+        assert f'<a href="{other}">' in html_
+
+
+def test_no_nav_without_links(r):
+    assert '<nav class="topnav"' not in full_html(Params(), r)
+
+
+def test_bad_link_spec_is_rejected():
+    with pytest.raises(SystemExit, match="LABEL=URL"):
+        main(["--scale", "none", "--format", "html", "--link", "no-equals-sign"])

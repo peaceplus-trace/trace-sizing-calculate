@@ -78,6 +78,20 @@ Example: what changes if HSI runs at 3 sites with 100 MB cubes, 20 samples/day?
 trace-sizing --set hsi.sites_with_camera=3 --set hsi.cube_mb=100 --set hsi.samples_per_day=20
 ```
 
+### Published pages
+
+The GitHub Pages build (`.github/workflows/pages.yml`) publishes, side by side:
+
+| Page | URL |
+|---|---|
+| Sizing report | https://peaceplus-trace.github.io/trace-sizing-calculate/ |
+| Cost estimate | https://peaceplus-trace.github.io/trace-sizing-calculate/cost.html |
+| Markdown / JSON | `report.md`, `report.json` (the JSON is what `trace-cost` reads) |
+
+Both HTML pages share a top bar linking to each other. It comes from `--link LABEL=URL`,
+which both `trace-sizing` and `trace-cost` accept; without it (e.g. local runs) there's no bar.
+To add another page, generate it in the build step and add a `--link` for it.
+
 ### Sharing a link to part of the HTML report
 
 Every section, sub-heading and table row in the HTML report has an `id`. Hover over one and

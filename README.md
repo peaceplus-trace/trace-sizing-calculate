@@ -91,6 +91,50 @@ changes and the report is regenerated. Examples: `#storage`, `#storage--by-strea
 `#formulas--kafka--disk-to-allocate`. A link breaks only if what it points to is removed or
 renamed in the code.
 
+## AWS cost estimate (pipeline)
+
+Cost is a separate stage that only reads the sizing report, so you can price the same sizing
+several ways without re-running it:
+
+```
+trace_workload.toml ──► trace-sizing ──► report.json ──► trace-cost ──► cost.html / .md / .json
+                                       (usage block)    ▲
+                                          cost.toml ────┘  region, prices, VAT, budget, VM overrides
+```
+
+```bash
+trace-sizing config/trace_workload.toml --format json -o build/report.json
+trace-cost build/report.json -o build/cost.html
+trace-cost build/report.json --vm portal=m7g.2xlarge --vm app=none -o build/cost-alt.html
+trace-cost build/report.json --region us-east-1 --price glue_dpu_hour=0.308 -o build/cost-us.json
+```
+
+- **Usage** (`report.json`'s `usage` block, schema `trace-usage/1`): per-month quantities —
+  VMs and hours, GB stored per S3 tier, S3 requests, lifecycle transitions, Glue DPU-hours,
+  IPv4/NAT, egress, retrievals. A hand-written `usage.json`/`.toml` in the same shape works too.
+- **Prices** (`config/cost.toml`): `region` picks a built-in price book
+  (`src/trace_sizing/cost/prices.py`, checked against AWS's public price list); `[prices]` and
+  `[prices.vm_hourly]` override or add rates.
+- **Terms** (`config/cost.toml`): `[terms]` exchange rate, discount, VAT, budget; `[[fixed]]`
+  monthly items such as ML training.
+- **VM overrides**: `[[vms]]` in `cost.toml` or `--vm` change, add (`--vm staging=t4g.large`) or
+  remove (`--vm app=none`) VMs by name; `--vm portal.ebs_gb=200` and `.hours_per_month` work too.
+  The cost step doesn't re-check VM fit; re-run `trace-sizing` for that.
+- `--emit-usage used.json` writes the usage actually priced, after overrides.
+
+From Python:
+
+```python
+from trace_sizing.cost import load_usage, PriceBook, Terms, estimate
+
+usage  = load_usage("build/report.json").with_vm_overrides([{"name": "portal", "instance_type": "m7g.2xlarge"}])
+result = estimate(usage, PriceBook.for_region("eu-west-1").override(glue_dpu_hour=0.308), Terms(vat=0.23))
+result.save("build/cost.json")
+```
+
+`trace-sizing` still includes the cost section in its own report, priced the same way using
+`config/cost.toml` (`--cost-config PATH` to choose another, `--no-cost` to leave it out).
+
 ## Parameter file
 
 The parameter file is TOML. [config/trace_workload.toml](config/trace_workload.toml)
@@ -141,11 +185,9 @@ The 11 system parameters:
   Raw IoT sits in one tier for life (`iot_raw_tier`, default `glacier_ir`). Silver and Gold stay in
   Standard for the whole project, plus `silver_gold_overhead` (10%) for versioning and Iceberg
   snapshots. If `sizing.retention_months` is set, data older than that is deleted from every tier.
-- `[pricing]`: the AWS cost estimate over `sizing.project_months`. Pick the `region`
-  (`eu-west-1` or `us-east-1`); list prices for both are built into `src/trace_sizing/cost.py`,
-  checked against AWS's public price list, and any can be overridden here. Also sets the EUR
-  rate, discount (e.g. OCRE), VAT, the budget to compare against, fixed monthly allowances, and
-  the Glue job shape. VMs are priced by `instance_type` in `[[vms]]`, or set `hourly_usd`.
+- `[glue]`, `[network]`, `[requests]`: quantities the cost step prices: the Glue ETL job shape,
+  public IPv4/NAT counts, egress and Glacier IR retrieval GB, and S3 request assumptions. They
+  end up in the report's `usage` block. Prices are in `config/cost.toml`.
 - `[[vms]]`: the fleet to check against.
 - `[[extra_components]]`: CKAN, PostgreSQL, Solr, the CKAN Redis instance, MQTT, and anything
   else the model doesn't derive. Add measured figures here so they count toward the totals

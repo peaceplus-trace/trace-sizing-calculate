@@ -115,29 +115,29 @@ hsi_glacier_ir_until_days = 365
 iot_raw_tier = "glacier_ir"       # "standard" | "glacier_ir" | "deep_archive"
 silver_gold_overhead = 0.10
 
-# AWS cost estimate. List prices for each region are built in (checked against
-# AWS's public price list on 2026-10-08); override any of them below. VMs are
-# priced by instance_type in [[vms]] (default m7g.xlarge), or set hourly_usd.
-[pricing]
-region = "eu-west-1"            # "eu-west-1" (Ireland) | "us-east-1"
-usd_to_eur = 0.87
-discount = 0.0                  # e.g. 0.12 for the OCRE AWS discount, once confirmed
-vat = 0.23                      # Irish VAT; set 0 if UCD can recover it
-budget_eur = 20000              # incl. VAT
-# glue_dpu_hour_usd = 0.308     # Glue 6.0+ job rate (default 0.44)
-public_ipv4_count = 3
-nat_instance_usd_month = 3.80
-ml_training_usd_month = 25
-logging_kms_usd_month = 10
-egress_gb_month = 0         # internet egress beyond the free 100 GB/month
-glacier_ir_retrieval_gb_month = 0   # GB read back from Glacier IR each month
+# AWS Glue ETL job shape (Data Lake pipeline). Becomes DPU-hours in the report's
+# usage block; the price per DPU-hour is in config/cost.toml.
+[glue]
 etl_runs_per_hour = 2           # Bronze->Silver and Silver->Gold Spark stages
 etl_dpus = 2
 etl_minutes_per_run = 3
 maintenance_runs_per_day = 1    # Iceberg compaction / snapshot expiry
 maintenance_dpus = 2
 maintenance_minutes_per_run = 10
-feature_vcpu_seconds_per_cube = 30
+feature_vcpu_seconds_per_cube = 30   # HSI feature extraction
+vcpu_per_dpu = 4
+
+# Network quantities (prices are in config/cost.toml).
+[network]
+public_ipv4_count = 3
+nat_instances = 1
+egress_gb_month = 0                 # internet egress beyond the free 100 GB/month
+glacier_ir_retrieval_gb_month = 0   # GB read back from Glacier IR each month
+
+# S3 request assumptions.
+[requests]
+data_files_per_commit = 1       # Iceberg data files per commit, per table
+gets_per_put = 2
 
 [sizing]
 disk_headroom = 0.5

@@ -1,4 +1,8 @@
-"""Command line: trace-sizing [params.toml] [--format md|html|json] [--scale 0.5,1,2] [--set iot.pilot_sites=5]"""
+"""Command line: trace-sizing [params.toml] [--format md|html|json] [--scale 0.5,1,2] [--set iot.pilot_sites=5]
+
+The JSON report carries a "usage" block that trace-cost reads; the md/html
+reports include the cost section, priced with config/cost.toml if it exists.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +15,7 @@ import sys
 from . import params as params_mod
 from .formulas import formulas
 from .html_report import full_html
+from .cost import estimate, load_config as load_cost_config, usage_from_sizing
 from .model import calculate, scaling_table
 from .report import full_md
 
@@ -71,6 +76,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="hide the 'Parameters used' section (md/html only; json always includes params)")
     ap.add_argument("--no-formulas", action="store_true",
                     help="hide the Formulas section (md/html only)")
+    ap.add_argument("--cost-config", metavar="PATH",
+                    help="cost config for the cost section (default: config/cost.toml if it exists)")
+    ap.add_argument("--no-cost", action="store_true", help="leave out the cost section")
     ap.add_argument("-o", "--output", help="write to file instead of stdout")
     args = ap.parse_args(argv)
     args.format = _resolve_format(args.format, args.output)
@@ -87,19 +95,32 @@ def main(argv: list[str] | None = None) -> int:
 
     result = calculate(p)
     table = scaling_table(p, factors) if factors else None
+    usage = usage_from_sizing(p, result)
+    cost = None
+    if not args.no_cost:
+        cfg_path = args.cost_config or ("config/cost.toml" if os.path.exists("config/cost.toml") else None)
+        try:
+            cfg = load_cost_config(cfg_path)
+            cost = estimate(usage.with_vm_overrides(cfg.vm_overrides), cfg.prices, cfg.terms)
+        except ValueError as e:
+            raise SystemExit(f"trace-sizing: cost config: {e}")
 
     if args.format == "json":
         doc = {
             "params": dataclasses.asdict(p),
             "result": result.to_dict(),
+            "usage": usage.to_dict(),
+            "cost": cost.to_dict() if cost is not None else None,
             "scaling": [{"factor": f, "result": r.to_dict()} for f, _, r in (table or [])],
-            "formulas": [dataclasses.asdict(f) for f in formulas(p, result)],
+            "formulas": [dataclasses.asdict(f) for f in formulas(p, result, cost)],
         }
         text = json.dumps(doc, indent=2) + "\n"
     elif args.format == "html":
-        text = full_html(p, result, table, show_params=not args.no_params, show_formulas=not args.no_formulas)
+        text = full_html(p, result, table, show_params=not args.no_params, show_formulas=not args.no_formulas,
+                         cost=cost)
     else:
-        text = full_md(p, result, table, show_params=not args.no_params, show_formulas=not args.no_formulas)
+        text = full_md(p, result, table, show_params=not args.no_params, show_formulas=not args.no_formulas,
+                       cost=cost)
 
     if args.output:
         with open(args.output, "w") as f:

@@ -425,62 +425,194 @@ def test_html_has_copy_link_script(r):
     assert '<div id="toast"' in out and "navigator.clipboard" in out
 
 
-def test_cost_vm_and_glue_lines(r):
-    c = r.cost
-    by_item = {l.item: l for l in c.lines}
-    assert c.region == "eu-west-1" and c.months == 36
-    assert by_item["VM portal (m7g.xlarge)"].total_usd == approx(0.1819 * 730 * 36)
-    glue = by_item["AWS Glue ETL"].total_usd
+from trace_sizing.cost import (PriceBook, Terms, Usage, VMUsage, estimate, load_usage,
+                               usage_from_sizing, load_config as load_cost_config)
+from trace_sizing.cost.cli import main as cost_main
+
+
+@pytest.fixture(scope="module")
+def usage():
+    # The shipped config (30 days in S3 Standard), which the $24,910 baseline used.
+    p = load(CONFIG / "trace_workload.toml")
+    return usage_from_sizing(p, calculate(p))
+
+
+@pytest.fixture(scope="module")
+def cost(usage):
+    return estimate(usage, PriceBook.for_region("eu-west-1"), Terms())
+
+
+def line(c, item):
+    return next(l for l in c.lines if l.item == item)
+
+
+def test_cost_vm_and_glue_lines(cost):
+    assert cost.region == "eu-west-1" and cost.months == 36
+    assert line(cost, "VM portal (m7g.xlarge)").total_usd == approx(0.1819 * 730 * 36)
     dpu_h = 2 * 730 * 2 * 3 / 60 + 1 * 365 / 12 * 2 * 10 / 60 + 480 * 260 / 365 * 365 / 12 * 30 / 4 / 3600
-    assert glue == approx(dpu_h * 0.44 * 36)
+    assert line(cost, "AWS Glue ETL").total_usd == approx(dpu_h * 0.44 * 36)
 
 
-def test_cost_storage_matches_integrated_volume(r):
-    # Deep Archive: HSI older than 365 days. Calendar-average HSI rate x days stored,
-    # integrated over the project, at $0.00099 per GB-month.
-    c = r.cost
-    da = next(l for l in c.lines if l.item == "S3 Glacier Deep Archive").total_usd
-    rate_gb = 96 * 260 / 365                          # GB/day
+def test_cost_unchanged_by_refactor(cost):
+    # Same inputs as before the pipeline split: the headline must not move.
+    assert cost.total_usd == approx(24910, abs=1)
+    assert cost.total_incl_vat_eur == approx(26656, abs=1)
+
+
+def test_cost_storage_matches_integrated_volume(cost):
+    da = line(cost, "S3 Glacier Deep Archive")
+    rate_gb = 96 * 260 / 365
     days = 36 * 365 / 12
-    gb_days = rate_gb * (days - 365) ** 2 / 2         # integral of rate x (t - 365)
-    assert da == approx(gb_days / (365 / 12) * 0.00099, rel=0.01)
-    assert all(m == 0 for m in next(l for l in c.lines if l.item == "S3 Glacier Deep Archive").monthly_usd[:12])
+    gb_days = rate_gb * (days - 365) ** 2 / 2
+    assert da.total_usd == approx(gb_days / (365 / 12) * 0.00099, rel=0.01)
+    assert all(m == 0 for m in da.monthly_usd[:12])
 
 
-def test_cost_totals_and_budget(r):
-    c = r.cost
-    assert c.total_usd == approx(sum(l.total_usd for l in c.lines))
-    assert c.total_incl_vat_eur == approx(c.total_usd * 0.87 * 1.23)
-    assert sum(c.year_totals_usd()) == approx(c.total_usd)
+def test_cost_totals_and_budget(cost):
+    assert cost.total_usd == approx(sum(l.total_usd for l in cost.lines))
+    assert cost.total_incl_vat_eur == approx(cost.total_usd * 0.87 * 1.23)
+    assert sum(cost.year_totals_usd()) == approx(cost.total_usd)
+    assert cost.budget_headroom_eur == approx(20000 - cost.total_incl_vat_eur)
 
 
-def test_cost_region_and_overrides():
-    us = calculate(from_dict({"pricing": {"region": "us-east-1"}})).cost
-    eu = calculate(Params()).cost
-    assert us.total_usd < eu.total_usd                        # Ireland VMs/EBS cost more
-    cheap_glue = calculate(from_dict({"pricing": {"glue_dpu_hour_usd": 0.308}})).cost
-    g = lambda c: next(l for l in c.lines if l.item == "AWS Glue ETL").total_usd
-    assert g(cheap_glue) == approx(g(eu) * 0.308 / 0.44)
+def test_price_book_region_overrides_and_errors(usage):
+    eu = estimate(usage, PriceBook.for_region("eu-west-1"))
+    us = estimate(usage, PriceBook.for_region("us-east-1"))
+    assert us.total_usd < eu.total_usd
+    cheap = estimate(usage, PriceBook.for_region("eu-west-1").override(glue_dpu_hour=0.308))
+    assert line(cheap, "AWS Glue ETL").total_usd == approx(line(eu, "AWS Glue ETL").total_usd * 0.308 / 0.44)
     with pytest.raises(ValueError, match="region"):
-        calculate(from_dict({"pricing": {"region": "mars-1"}}))
-    with pytest.raises(ValueError, match="hourly_usd"):
-        calculate(from_dict({"vms": [{"name": "x", "instance_type": "z9.huge"}]}))
+        PriceBook.for_region("mars-1")
+    with pytest.raises(ValueError, match="unknown price key"):
+        PriceBook.for_region("eu-west-1").override(glue=1)
+    odd = usage.with_vm_overrides([{"name": "portal", "instance_type": "z9.huge"}])
+    with pytest.raises(ValueError, match=r"prices.vm_hourly"):
+        estimate(odd, PriceBook.for_region("eu-west-1"))
 
 
-def test_cost_retention_cap_cuts_storage_cost():
-    full = calculate(Params()).cost
-    capped = calculate(from_dict({"sizing": {"retention_months": 12}})).cost
-    s = lambda c: sum(l.total_usd for l in c.lines if l.category == "Storage")
-    assert s(capped) < s(full)
-    assert next(l for l in capped.lines if l.item == "S3 Glacier Deep Archive").total_usd == 0
+def test_retention_cap_cuts_storage_cost():
+    p = from_dict({"sizing": {"retention_months": 12}})
+    capped = estimate(usage_from_sizing(p, calculate(p)), PriceBook.for_region("eu-west-1"))
+    full = estimate(usage_from_sizing(Params(), calculate(Params())), PriceBook.for_region("eu-west-1"))
+    storage = lambda c: sum(l.total_usd for l in c.lines if l.category == "Storage")
+    assert storage(capped) < storage(full)
+    assert line(capped, "S3 Glacier Deep Archive").total_usd == 0
 
 
-def test_cost_in_reports(r, capsys):
+# ---- the usage contract
+
+def test_usage_round_trip_and_validation(usage, tmp_path):
+    path = tmp_path / "usage.json"
+    usage.save(path)
+    assert load_usage(path) == usage
+    d = usage.to_dict()
+    with pytest.raises(ValueError, match="schema"):
+        Usage.from_dict({**d, "schema": "trace-usage/0"})
+    with pytest.raises(ValueError, match="expected 36"):
+        Usage.from_dict({**d, "glue_dpu_hours": {"etl": [1.0] * 35}})
+    with pytest.raises(ValueError, match="unknown storage_gb key"):
+        Usage.from_dict({**d, "storage_gb": {**d["storage_gb"], "tape": [0.0] * 36}})
+    bad = tmp_path / "x.json"
+    bad.write_text('{"hello": 1}')
+    with pytest.raises(ValueError, match="trace-sizing"):
+        load_usage(bad)
+
+
+def test_vm_overrides_change_add_remove(usage):
+    u = usage.with_vm_overrides([
+        {"name": "portal", "instance_type": "m7g.2xlarge"},
+        {"name": "data-plane", "ebs_gb": 200},
+        {"name": "app", "remove": True},
+        {"name": "staging", "instance_type": "t4g.large", "ebs_gb": 50},
+    ])
+    by = {v.name: v for v in u.vms}
+    assert list(by) == ["portal", "data-plane", "staging"]
+    assert by["portal"].instance_type == "m7g.2xlarge" and by["portal"].ebs_gb == 100
+    assert by["data-plane"].ebs_gb == 200
+    assert usage.vms[0].instance_type == "m7g.xlarge"            # original untouched
+    with pytest.raises(ValueError, match="needs an instance_type"):
+        usage.with_vm_overrides([{"name": "new"}])
+    with pytest.raises(ValueError, match="can't remove"):
+        usage.with_vm_overrides([{"name": "ghost", "remove": True}])
+    with pytest.raises(ValueError, match="unknown field"):
+        usage.with_vm_overrides([{"name": "portal", "vcpu": 8}])
+
+
+def test_estimate_from_hand_written_usage():
+    u = Usage(months=2, vms=[VMUsage("a", "m7g.xlarge", 730, 10)],
+              storage_gb={"standard": [100, 200]}, s3_requests={}, transitions={}, glue_dpu_hours={})
+    c = estimate(u, PriceBook.for_region("us-east-1"), Terms(fixed=[], vat=0, budget_eur=None))
+    assert line(c, "VM a (m7g.xlarge)").monthly_usd == approx([0.1632 * 730] * 2)
+    assert line(c, "S3 Standard").monthly_usd == approx([2.3, 4.6])
+    assert line(c, "EBS gp3 disks").total_usd == approx(10 * 0.08 * 2)
+
+
+# ---- the pipeline
+
+def test_pipeline_matches_in_process(tmp_path, capsys, cost):
+    report = tmp_path / "report.json"
+    assert main([str(CONFIG / "trace_workload.toml"), "--scale", "none", "--no-cost", "-o", str(report)]) == 0
+    piped = estimate(load_usage(report), PriceBook.for_region("eu-west-1"), Terms())
+    assert piped.total_usd == approx(cost.total_usd)
+    assert [l.total_usd for l in piped.lines] == approx([l.total_usd for l in cost.lines])
+
+
+def test_trace_cost_cli_overrides_and_formats(tmp_path, capsys):
+    report = tmp_path / "report.json"
+    assert main([str(CONFIG / "trace_workload.toml"), "--scale", "none", "-o", str(report)]) == 0
+    base = json.loads(report.read_text())["cost"]["summary"]["total_usd"]
+
+    out = tmp_path / "cost.json"
+    used = tmp_path / "used.json"
+    assert cost_main([str(report), "--config", str(CONFIG / "cost.toml"), "--vm", "portal=m7g.2xlarge",
+                      "--vm", "app=none", "--price", "glue_dpu_hour=0.308",
+                      "-o", str(out), "--emit-usage", str(used)]) == 0
+    d = json.loads(out.read_text())
+    items = {l["item"]: l["total_usd"] for l in d["lines"]}
+    assert "VM portal (m7g.2xlarge)" in items and not any(i.startswith("VM app") for i in items)
+    assert d["prices"]["rates"]["glue_dpu_hour"] == 0.308
+    assert [v["name"] for v in load_usage(used).to_dict()["vms"]] == ["portal", "data-plane"]
+    assert d["summary"]["total_usd"] != approx(base)
+
+    for fmt, start in [("md", "# TRACE AWS cost estimate"), ("html", "<!doctype html>")]:
+        assert cost_main([str(report), "--config", str(CONFIG / "cost.toml"), "--format", fmt]) == 0
+        assert capsys.readouterr().out.startswith(start)
+    with pytest.raises(SystemExit, match="NAME=TYPE"):
+        cost_main([str(report), "--vm", "portal"])
+    with pytest.raises(SystemExit, match="prices.vm_hourly"):
+        cost_main([str(report), "--config", str(CONFIG / "cost.toml"), "--vm", "portal=z9.huge"])
+
+
+def test_cost_config_file_and_vm_overrides(tmp_path):
+    cfg = load_cost_config(CONFIG / "cost.toml")
+    assert cfg.prices.region == "eu-west-1" and cfg.terms.vat == 0.23
+    assert [f.item for f in cfg.terms.fixed] == ["ML training", "Logging and KMS"]
+    f = tmp_path / "c.toml"
+    f.write_text('region = "us-east-1"\n[terms]\nbudget_eur = 0\n[prices.vm_hourly]\n"x.big" = 1.5\n'
+                 '[[vms]]\nname = "portal"\ninstance_type = "x.big"\n')
+    cfg = load_cost_config(f)
+    assert cfg.terms.budget_eur is None and cfg.prices.vm_rate("x.big") == 1.5
+    assert cfg.vm_overrides == [{"name": "portal", "instance_type": "x.big"}]
+    f.write_text("colour = 1\n")
+    with pytest.raises(ValueError, match="unknown key"):
+        load_cost_config(f)
+
+
+def test_old_pricing_section_gives_clear_error():
+    with pytest.raises(ValueError, match="config/cost.toml"):
+        from_dict({"pricing": {"region": "eu-west-1"}})
+    with pytest.raises(ValueError, match="hourly_usd has moved"):
+        from_dict({"vms": [{"name": "a", "hourly_usd": 1.0}]})
+
+
+def test_cost_in_reports(r, capsys, cost):
     assert main(["--scale", "none", "--no-params"]) == 0
-    out = capsys.readouterr().out
-    assert "## AWS cost estimate (36 months, eu-west-1)" in out
-    html = full_html(Params(), r)
+    assert "## AWS cost estimate (36 months, eu-west-1)" in capsys.readouterr().out
+    assert main(["--scale", "none", "--no-params", "--no-cost"]) == 0
+    assert "AWS cost estimate" not in capsys.readouterr().out
+    html = full_html(Params(), r, cost=cost)
     assert 'id="cost--summary--incl-vat"' in html and 'id="cost--lines--aws-glue-etl"' in html
-    assert main(["--format", "json", "--scale", "none"]) == 0
+    assert main([str(CONFIG / "trace_workload.toml"), "--format", "json", "--scale", "none"]) == 0
     d = json.loads(capsys.readouterr().out)
-    assert d["result"]["cost"]["summary"]["total_usd"] == approx(r.cost.total_usd)
+    assert d["usage"]["schema"] == "trace-usage/1"
+    assert d["cost"]["summary"]["total_usd"] == approx(cost.total_usd)

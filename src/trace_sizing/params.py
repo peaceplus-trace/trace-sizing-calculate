@@ -176,8 +176,7 @@ class VM:
     vcpu: float = 4.0                      # 48
     ram_gib: float = 16.0                  # 48
     disk_gb: float = 100.0
-    instance_type: str = "m7g.xlarge"      # priced from the region's price book
-    hourly_usd: float | None = None        # set to price any other instance type
+    instance_type: str = "m7g.xlarge"      # priced in config/cost.toml
 
 
 @dataclass
@@ -204,34 +203,9 @@ class StoragePolicy:
 
 
 @dataclass
-class Pricing:
-    """AWS cost assumptions. List prices come from the region's price book in
-    cost.py (checked against AWS's public price list); any of them can be
-    overridden here. Everything else is a usage assumption."""
-    region: str = "eu-west-1"               # "eu-west-1" (Ireland) | "us-east-1"
-    usd_to_eur: float = 0.87
-    discount: float = 0.0                   # e.g. 0.12 for the OCRE AWS discount, once confirmed
-    vat: float = 0.23                       # Irish VAT; set 0 if recoverable
-    budget_eur: float | None = 20000.0      # incl. VAT; compared against the total
-    # Price overrides (USD); None = use the region's price book
-    ebs_gb_month_usd: float | None = None
-    s3_standard_gb_month_usd: float | None = None
-    s3_glacier_ir_gb_month_usd: float | None = None
-    s3_deep_archive_gb_month_usd: float | None = None
-    glue_dpu_hour_usd: float | None = None  # 0.44 standard; 0.308 on Glue 6.0+
-    # Networking and fixed monthly allowances (USD)
-    public_ipv4_count: int = 3
-    public_ipv4_hourly_usd: float = 0.005
-    nat_instance_usd_month: float = 3.80
-    ml_training_usd_month: float = 25.0
-    logging_kms_usd_month: float = 10.0
-    egress_gb_month: float = 0.0            # data out to the internet beyond the free 100 GB
-    egress_gb_usd: float = 0.09
-    glacier_ir_retrieval_gb_month: float = 0.0   # GB read back from Glacier IR each month
-    # S3 request assumptions
-    data_files_per_commit: int = 1          # Iceberg data files written per commit, per table
-    gets_per_put: float = 2.0
-    # Glue ETL job shape
+class Glue:
+    """AWS Glue ETL job shape (Data Lake pipeline). Turns into DPU-hours in the
+    usage block; the price per DPU-hour lives in config/cost.toml."""
     etl_runs_per_hour: float = 2.0          # two hourly Spark stages (Bronze->Silver, Silver->Gold)
     etl_dpus: float = 2.0
     etl_minutes_per_run: float = 3.0
@@ -241,12 +215,21 @@ class Pricing:
     feature_vcpu_seconds_per_cube: float = 30.0   # HSI feature extraction
     vcpu_per_dpu: float = 4.0
 
-    def __post_init__(self) -> None:
-        for name in ("usd_to_eur", "discount", "vat"):
-            if getattr(self, name) < 0:
-                raise ValueError(f"[pricing] {name} must be >= 0")
-        if self.discount >= 1:
-            raise ValueError("[pricing] discount is a fraction, e.g. 0.12 for 12%")
+
+@dataclass
+class Network:
+    """Network quantities. Prices live in config/cost.toml."""
+    public_ipv4_count: int = 3
+    nat_instances: int = 1
+    egress_gb_month: float = 0.0            # data out to the internet beyond the free 100 GB
+    glacier_ir_retrieval_gb_month: float = 0.0   # GB read back from Glacier IR each month
+
+
+@dataclass
+class Requests:
+    """S3 request assumptions."""
+    data_files_per_commit: int = 1          # Iceberg data files written per commit, per table
+    gets_per_put: float = 2.0
 
 
 @dataclass
@@ -281,7 +264,9 @@ class Params:
     lakehouse: Lakehouse = field(default_factory=Lakehouse)
     ml: MLPipeline = field(default_factory=MLPipeline)
     storage: StoragePolicy = field(default_factory=StoragePolicy)
-    pricing: Pricing = field(default_factory=Pricing)
+    glue: Glue = field(default_factory=Glue)
+    network: Network = field(default_factory=Network)
+    requests: Requests = field(default_factory=Requests)
     sizing: Sizing = field(default_factory=Sizing)
     extra_components: list[ExtraComponent] = field(default_factory=list)
     vms: list[VM] = field(
@@ -314,7 +299,9 @@ _SECTIONS = {
     "lakehouse": Lakehouse,
     "ml": MLPipeline,
     "storage": StoragePolicy,
-    "pricing": Pricing,
+    "glue": Glue,
+    "network": Network,
+    "requests": Requests,
     "sizing": Sizing,
 }
 
@@ -327,7 +314,23 @@ def _build(cls: type, data: dict[str, Any], where: str):
     return cls(**data)
 
 
+_MOVED_PRICING = (
+    "[pricing] has moved. Region, prices, usd_to_eur, discount, vat, budget_eur and the fixed "
+    "monthly items (ML training, logging/KMS) go in config/cost.toml. In this file: the Glue job "
+    "shape goes in [glue]; public_ipv4_count, egress_gb_month and glacier_ir_retrieval_gb_month "
+    "in [network]; data_files_per_commit and gets_per_put in [requests]."
+)
+
+
 def from_dict(data: dict[str, Any]) -> Params:
+    if "pricing" in data:
+        raise ValueError(_MOVED_PRICING)
+    for vm in data.get("vms", []):
+        if "hourly_usd" in vm:
+            raise ValueError(
+                f"[[vms]] {vm.get('name', '?')}: hourly_usd has moved to config/cost.toml "
+                "([prices.vm_hourly], keyed by instance type)."
+            )
     unknown = set(data) - set(_SECTIONS) - {"extra_components", "vms"}
     if unknown:
         raise ValueError(f"unknown section(s): {', '.join(sorted(unknown))}")

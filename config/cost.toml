@@ -1,0 +1,41 @@
+# AWS cost estimate settings, read by trace-cost (and by trace-sizing for the
+# cost section of its report). Everything here is money; the quantities being
+# priced come from the sizing report's usage block.
+#
+#   trace-sizing config/trace_workload.toml --format json -o build/report.json
+#   trace-cost build/report.json -o build/cost.html
+
+region = "eu-west-1"            # "eu-west-1" (Ireland) | "us-east-1"
+
+[terms]
+usd_to_eur = 0.87
+discount = 0.0                  # e.g. 0.12 for the OCRE AWS discount, once confirmed
+vat = 0.23                      # Irish VAT; set 0 if UCD can recover it
+budget_eur = 20000              # incl. VAT; 0 = don't compare
+
+# Fixed monthly items (USD). Listing any [[fixed]] replaces the defaults.
+[[fixed]]
+item = "ML training"
+usd_month = 25
+
+[[fixed]]
+item = "Logging and KMS"
+usd_month = 10
+
+# Price overrides (USD). Built-in prices for the region are in
+# src/trace_sizing/cost/prices.py, checked against AWS's public price list.
+[prices]
+# glue_dpu_hour = 0.308         # Glue 6.0+ job rate (default 0.44)
+
+# Hourly prices for instance types not built in, keyed by type.
+[prices.vm_hourly]
+# "x8g.xlarge" = 0.25
+
+# VM overrides: change, add or remove the report's VMs, matched by name.
+# A new name adds a VM (needs instance_type); remove = true drops one.
+# The cost step doesn't re-check VM fit - re-run trace-sizing for that.
+# [[vms]]
+# name = "portal"
+# instance_type = "m7g.2xlarge"
+# ebs_gb = 200
+# hours_per_month = 730

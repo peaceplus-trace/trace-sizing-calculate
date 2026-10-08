@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import dataclasses
 
-from .fmt import _n
+from .fmt import _n, md_table
 from .formulas import formulas
 from .model import GB, KB, MB, TB, Result
 from .params import Params
 
 
-def _table(headers: list[str], rows: list[list[str]]) -> str:
-    out = ["| " + " | ".join(headers) + " |", "|" + "|".join("---" for _ in headers) + "|"]
-    out += ["| " + " | ".join(r) + " |" for r in rows]
-    return "\n".join(out)
+_table = md_table
 
 
 def _value(x) -> str:
@@ -29,7 +26,7 @@ def _value(x) -> str:
 
 
 _SECTIONS = ["iot", "hsi", "kafka", "flink", "prometheus", "grafana",
-             "alerting", "redis", "lakehouse", "ml", "storage", "sizing"]
+             "alerting", "redis", "lakehouse", "ml", "storage", "glue", "network", "requests", "sizing"]
 
 
 def params_md(p: Params) -> str:
@@ -295,12 +292,12 @@ def scaling_md(table) -> str:
     )
 
 
-def formulas_md(p: Params, r: Result) -> str:
+def formulas_md(p: Params, r: Result, cost=None) -> str:
     """Every derived number, its formula, and this run's values substituted in."""
     out = ["## Formulas", "",
            "_Each derived number, its formula (as in `model.py`), and this run's values substituted in._", ""]
     by_section: dict[str, list] = {}
-    for f in formulas(p, r):
+    for f in formulas(p, r, cost):
         by_section.setdefault(f.section, []).append(
             [f.quantity, f"`{f.formula}`", f.worked, f"**{f.result}**"]
         )
@@ -309,51 +306,9 @@ def formulas_md(p: Params, r: Result) -> str:
     return "\n".join(out).rstrip()
 
 
-def _cost_summary_rows(c, money):
-    rows = [["Subtotal (USD)", money(c.total_usd, "$")],
-            [f"In EUR (x {_n(c.usd_to_eur)})", money(c.total_eur, "EUR ")]]
-    if c.discount:
-        rows.append([f"After {_n(c.discount * 100)}% discount", money(c.after_discount_eur, "EUR ")])
-    rows.append([f"Incl. {_n(c.vat * 100)}% VAT", money(c.total_incl_vat_eur, "EUR ")])
-    if c.budget_eur:
-        diff = c.budget_eur - c.total_incl_vat_eur
-        rows.append([f"Budget (EUR {c.budget_eur:,.0f})",
-                     (f"under by EUR {diff:,.0f}" if diff >= 0 else f"OVER by EUR {-diff:,.0f}")])
-    return rows
-
-
-def cost_md(r: Result) -> str:
-    c = r.cost
-    money = lambda x, cur="$": f"{cur}{x:,.0f}"
-    line_rows = [[l.category, l.item, l.basis, money(l.total_usd / c.months), f"**{money(l.total_usd)}**"]
-                 for l in c.lines]
-    years = c.year_totals_usd()
-    cats = c.category_totals_usd()
-    return "\n".join([
-        f"## AWS cost estimate ({c.months} months, {c.region})",
-        "",
-        "_On-demand list prices from AWS's public price list (USD, ex. tax), applied to the volumes above. "
-        "Assumes every site is live from month 1, so it errs high for a phased roll-out._",
-        "",
-        _table(["", "Amount"], [[k, f"**{v}**" if i == 0 or k.startswith("Incl") else v]
-                                for i, (k, v) in enumerate(_cost_summary_rows(c, money))]),
-        "",
-        "**By year**",
-        "",
-        _table(["Year", "USD", "EUR"], [[f"Year {i + 1}", money(y), money(y * c.usd_to_eur, "EUR ")]
-                                         for i, y in enumerate(years)]),
-        "",
-        "**By category**",
-        "",
-        _table(["Category", "USD", "Share"], [[k, money(v), f"{v / c.total_usd * 100:.0f}%"] for k, v in cats.items()]),
-        "",
-        "**Line items**",
-        "",
-        _table(["Category", "Item", "Basis", "Avg/month", "Total"], line_rows),
-    ])
-
-
-def full_md(p: Params, r: Result, table=None, show_params: bool = True, show_formulas: bool = True) -> str:
+def full_md(p: Params, r: Result, table=None, show_params: bool = True, show_formulas: bool = True,
+            cost=None) -> str:
+    from .cost.render import cost_md
     parts = ["# TRACE sizing report", ""]
     if show_params:
         parts += [params_md(p), ""]
@@ -362,11 +317,12 @@ def full_md(p: Params, r: Result, table=None, show_params: bool = True, show_for
         lakehouse_md(r), "",
         storage_md(p, r), "",
         components_md(r), "",
-        fit_md(p, r), "",
-        cost_md(r),
+        fit_md(p, r),
     ]
+    if cost is not None:
+        parts += ["", cost_md(cost)]
     if show_formulas:
-        parts += ["", formulas_md(p, r)]
+        parts += ["", formulas_md(p, r, cost)]
     if table:
         parts += ["", scaling_md(table)]
     return "\n".join(parts) + "\n"

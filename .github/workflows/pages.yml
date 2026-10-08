@@ -37,6 +37,8 @@ jobs:
           mkdir -p site
           trace-sizing config/trace_workload.toml --format html -o site/index.html
           trace-sizing config/trace_workload.toml --format md -o site/report.md
+          trace-sizing config/trace_workload.toml --format json -o site/report.json
+          trace-cost site/report.json --config config/cost.toml -o site/cost.html
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

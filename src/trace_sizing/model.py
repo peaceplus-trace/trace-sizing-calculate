@@ -126,20 +126,10 @@ class Result:
     total: Component
     fit: Fit
     storage: StorageTiers
-    cost: "CostEstimate | None" = None     # filled by calculate(); see cost.py
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["fit"]["fits"] = self.fit.fits
-        if self.cost is not None:
-            c = self.cost
-            d["cost"]["summary"] = {
-                "total_usd": c.total_usd, "total_eur": c.total_eur,
-                "after_discount_eur": c.after_discount_eur, "total_incl_vat_eur": c.total_incl_vat_eur,
-                "year_totals_usd": c.year_totals_usd(), "category_totals_usd": c.category_totals_usd(),
-            }
-            for line, out in zip(c.lines, d["cost"]["lines"]):
-                out["total_usd"] = line.total_usd
         return d
 
 
@@ -471,10 +461,7 @@ def calculate(p: Params) -> Result:
         required_ram_gb=total.ram_gb + n * p.sizing.os_ram_gb_per_vm,
         required_disk_gb=total.disk_gb + n * p.sizing.os_disk_gb_per_vm,
     )
-    result = Result(workload=w, components=comps, total=total, fit=fit, storage=storage_tiers(p, w))
-    from .cost import cost_estimate     # cost.py builds on Result, so import here
-    result.cost = cost_estimate(p, result)
-    return result
+    return Result(workload=w, components=comps, total=total, fit=fit, storage=storage_tiers(p, w))
 
 
 def scaling_table(p: Params, factors: list[float] | None = None) -> list[tuple[float, Params, Result]]:

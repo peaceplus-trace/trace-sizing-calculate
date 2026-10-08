@@ -28,7 +28,7 @@ def _comp(r: Result, prefix: str):
     return next(c for c in r.components if c.name.startswith(prefix))
 
 
-def formulas(p: Params, r: Result) -> list[Formula]:
+def formulas(p: Params, r: Result, cost=None) -> list[Formula]:
     w = r.workload
     iot, hsi, acc = w.iot, w.hsi, w.accumulated
     lh, ml = w.lakehouse, w.ml
@@ -225,33 +225,34 @@ def formulas(p: Params, r: Result) -> list[Formula]:
         f"(1 + {_n(sp.silver_gold_overhead)}) x {_n(t_days, 0)} = {_n(end['silver']['standard'] / GB)} GB",
         f"{_n(end['silver']['standard'] / GB)} GB")
 
-    # ---- AWS cost
-    c = r.cost
+    # ---- AWS cost (only when a CostEstimate is passed in)
+    c = cost
     if c is not None:
-        from .cost import HOURS_PER_MONTH, glue_dpu_hours_per_month
-        n_m = c.months
-        line = {l.item.split(" (")[0]: l for l in c.lines}
-        vm0 = p.vms[0]
-        vm_line = c.lines[0]
-        rate = vm_line.total_usd / n_m / HOURS_PER_MONTH
-        add("Cost", "One VM over the project", "hourly price x 730 h/month x project_months",
-            f"${rate:g} x 730 x {n_m} = ${vm_line.total_usd:,.0f}", f"${vm_line.total_usd:,.0f}")
-        for tier, key in [("S3 Standard", "s3_standard_gb_month"), ("S3 Glacier Instant Retrieval", "s3_glacier_ir_gb_month"),
-                          ("S3 Glacier Deep Archive", "s3_deep_archive_gb_month")]:
-            l = line[tier]
-            gbm = l.total_usd / c.prices[key]
-            add("Cost", tier, "sum over months of GB stored that month x price per GB-month",
-                f"{gbm:,.0f} GB-months x ${c.prices[key]} = ${l.total_usd:,.0f}", f"${l.total_usd:,.0f}")
-        dpu = glue_dpu_hours_per_month(p, r)
-        pr = p.pricing
+        u, rates, n_m = c.usage, c.prices.rates, c.months
+        if u.vms:
+            vm = u.vms[0]
+            rate = c.prices.vm_rate(vm.instance_type)
+            total = rate * vm.hours_per_month * n_m
+            add("Cost", f"VM {vm.name} over the project", "hourly price x hours/month x months",
+                f"${rate:g} x {vm.hours_per_month:g} x {n_m} = ${total:,.0f}", f"${total:,.0f}")
+        for tier, key, label in [("standard", "s3_standard_gb_month", "S3 Standard"),
+                                 ("glacier_ir", "s3_glacier_ir_gb_month", "S3 Glacier Instant Retrieval"),
+                                 ("deep_archive", "s3_deep_archive_gb_month", "S3 Glacier Deep Archive")]:
+            gbm = sum(u.storage_gb.get(tier, []))
+            add("Cost", label, "sum over months of GB stored that month x price per GB-month",
+                f"{gbm:,.0f} GB-months x ${rates[key]} = ${gbm * rates[key]:,.0f}", f"${gbm * rates[key]:,.0f}")
+        g = p.glue
+        dpu = {k: sum(v) / n_m for k, v in u.glue_dpu_hours.items()}
         add("Cost", "Glue DPU-hours per month",
             "runs/h x 730 x DPUs x min/60 + maintenance + cubes/day x 30.4 x vCPU-s / vCPU-per-DPU / 3600",
-            f"{_n(pr.etl_runs_per_hour)} x 730 x {_n(pr.etl_dpus)} x {_n(pr.etl_minutes_per_run)}/60 "
-            f"+ {_n(dpu['maintenance'], 1)} + {_n(dpu['features'], 1)} = {_n(sum(dpu.values()), 1)}",
+            f"{_n(g.etl_runs_per_hour)} x 730 x {_n(g.etl_dpus)} x {_n(g.etl_minutes_per_run)}/60 "
+            f"+ {_n(dpu.get('maintenance', 0), 1)} + {_n(dpu.get('features', 0), 1)} = {_n(sum(dpu.values()), 1)}",
             f"{_n(sum(dpu.values()), 1)} DPU-h")
+        t = c.terms
         add("Cost", "Subtotal", "sum of all line items (USD)", f"= ${c.total_usd:,.0f}", f"${c.total_usd:,.0f}")
         add("Cost", "Total incl. VAT", "subtotal x usd_to_eur x (1 - discount) x (1 + vat)",
-            f"${c.total_usd:,.0f} x {_n(c.usd_to_eur)} x (1 - {_n(c.discount)}) x (1 + {_n(c.vat)}) = EUR {c.total_incl_vat_eur:,.0f}",
+            f"${c.total_usd:,.0f} x {_n(t.usd_to_eur)} x (1 - {_n(t.discount)}) x (1 + {_n(t.vat)}) = "
+            f"EUR {c.total_incl_vat_eur:,.0f}",
             f"EUR {c.total_incl_vat_eur:,.0f}")
 
     # ---- VM fit

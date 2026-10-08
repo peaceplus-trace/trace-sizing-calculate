@@ -225,6 +225,35 @@ def formulas(p: Params, r: Result) -> list[Formula]:
         f"(1 + {_n(sp.silver_gold_overhead)}) x {_n(t_days, 0)} = {_n(end['silver']['standard'] / GB)} GB",
         f"{_n(end['silver']['standard'] / GB)} GB")
 
+    # ---- AWS cost
+    c = r.cost
+    if c is not None:
+        from .cost import HOURS_PER_MONTH, glue_dpu_hours_per_month
+        n_m = c.months
+        line = {l.item.split(" (")[0]: l for l in c.lines}
+        vm0 = p.vms[0]
+        vm_line = c.lines[0]
+        rate = vm_line.total_usd / n_m / HOURS_PER_MONTH
+        add("Cost", "One VM over the project", "hourly price x 730 h/month x project_months",
+            f"${rate:g} x 730 x {n_m} = ${vm_line.total_usd:,.0f}", f"${vm_line.total_usd:,.0f}")
+        for tier, key in [("S3 Standard", "s3_standard_gb_month"), ("S3 Glacier Instant Retrieval", "s3_glacier_ir_gb_month"),
+                          ("S3 Glacier Deep Archive", "s3_deep_archive_gb_month")]:
+            l = line[tier]
+            gbm = l.total_usd / c.prices[key]
+            add("Cost", tier, "sum over months of GB stored that month x price per GB-month",
+                f"{gbm:,.0f} GB-months x ${c.prices[key]} = ${l.total_usd:,.0f}", f"${l.total_usd:,.0f}")
+        dpu = glue_dpu_hours_per_month(p, r)
+        pr = p.pricing
+        add("Cost", "Glue DPU-hours per month",
+            "runs/h x 730 x DPUs x min/60 + maintenance + cubes/day x 30.4 x vCPU-s / vCPU-per-DPU / 3600",
+            f"{_n(pr.etl_runs_per_hour)} x 730 x {_n(pr.etl_dpus)} x {_n(pr.etl_minutes_per_run)}/60 "
+            f"+ {_n(dpu['maintenance'], 1)} + {_n(dpu['features'], 1)} = {_n(sum(dpu.values()), 1)}",
+            f"{_n(sum(dpu.values()), 1)} DPU-h")
+        add("Cost", "Subtotal", "sum of all line items (USD)", f"= ${c.total_usd:,.0f}", f"${c.total_usd:,.0f}")
+        add("Cost", "Total incl. VAT", "subtotal x usd_to_eur x (1 - discount) x (1 + vat)",
+            f"${c.total_usd:,.0f} x {_n(c.usd_to_eur)} x (1 - {_n(c.discount)}) x (1 + {_n(c.vat)}) = EUR {c.total_incl_vat_eur:,.0f}",
+            f"EUR {c.total_incl_vat_eur:,.0f}")
+
     # ---- VM fit
     f = r.fit
     n = len(p.vms)

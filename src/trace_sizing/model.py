@@ -126,10 +126,20 @@ class Result:
     total: Component
     fit: Fit
     storage: StorageTiers
+    cost: "CostEstimate | None" = None     # filled by calculate(); see cost.py
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["fit"]["fits"] = self.fit.fits
+        if self.cost is not None:
+            c = self.cost
+            d["cost"]["summary"] = {
+                "total_usd": c.total_usd, "total_eur": c.total_eur,
+                "after_discount_eur": c.after_discount_eur, "total_incl_vat_eur": c.total_incl_vat_eur,
+                "year_totals_usd": c.year_totals_usd(), "category_totals_usd": c.category_totals_usd(),
+            }
+            for line, out in zip(c.lines, d["cost"]["lines"]):
+                out["total_usd"] = line.total_usd
         return d
 
 
@@ -296,17 +306,23 @@ def storage_rates(p: Params, w: Workload) -> dict[str, float]:
     }
 
 
-def storage_tiers(p: Params, w: Workload) -> StorageTiers:
+def stored_by_stream(p: Params, w: Workload, t_days: float) -> dict[str, dict[str, float]]:
+    """Stored bytes per stream and tier, t_days after go-live."""
     rates = storage_rates(p, w)
     place = _placements(p)
     retention_days = (p.sizing.retention_months * 365 / 12) if p.sizing.retention_months is not None else math.inf
+    t = min(t_days, retention_days)     # data older than retention_months has been deleted
+    return {
+        stream: {tier: _held(rates[stream], *place[stream][tier], t) for tier in TIERS}
+        for stream in STREAMS
+    }
+
+
+def storage_tiers(p: Params, w: Workload) -> StorageTiers:
+    rates = storage_rates(p, w)
 
     def at(t_days: float) -> dict[str, dict[str, float]]:
-        t = min(t_days, retention_days)     # data older than retention_months has been deleted
-        return {
-            stream: {tier: _held(rates[stream], *place[stream][tier], t) for tier in TIERS}
-            for stream in STREAMS
-        }
+        return stored_by_stream(p, w, t_days)
 
     project_days = p.sizing.project_months * 365 / 12
     milestones = []
@@ -455,7 +471,10 @@ def calculate(p: Params) -> Result:
         required_ram_gb=total.ram_gb + n * p.sizing.os_ram_gb_per_vm,
         required_disk_gb=total.disk_gb + n * p.sizing.os_disk_gb_per_vm,
     )
-    return Result(workload=w, components=comps, total=total, fit=fit, storage=storage_tiers(p, w))
+    result = Result(workload=w, components=comps, total=total, fit=fit, storage=storage_tiers(p, w))
+    from .cost import cost_estimate     # cost.py builds on Result, so import here
+    result.cost = cost_estimate(p, result)
+    return result
 
 
 def scaling_table(p: Params, factors: list[float] | None = None) -> list[tuple[float, Params, Result]]:

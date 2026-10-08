@@ -309,6 +309,50 @@ def formulas_md(p: Params, r: Result) -> str:
     return "\n".join(out).rstrip()
 
 
+def _cost_summary_rows(c, money):
+    rows = [["Subtotal (USD)", money(c.total_usd, "$")],
+            [f"In EUR (x {_n(c.usd_to_eur)})", money(c.total_eur, "EUR ")]]
+    if c.discount:
+        rows.append([f"After {_n(c.discount * 100)}% discount", money(c.after_discount_eur, "EUR ")])
+    rows.append([f"Incl. {_n(c.vat * 100)}% VAT", money(c.total_incl_vat_eur, "EUR ")])
+    if c.budget_eur:
+        diff = c.budget_eur - c.total_incl_vat_eur
+        rows.append([f"Budget (EUR {c.budget_eur:,.0f})",
+                     (f"under by EUR {diff:,.0f}" if diff >= 0 else f"OVER by EUR {-diff:,.0f}")])
+    return rows
+
+
+def cost_md(r: Result) -> str:
+    c = r.cost
+    money = lambda x, cur="$": f"{cur}{x:,.0f}"
+    line_rows = [[l.category, l.item, l.basis, money(l.total_usd / c.months), f"**{money(l.total_usd)}**"]
+                 for l in c.lines]
+    years = c.year_totals_usd()
+    cats = c.category_totals_usd()
+    return "\n".join([
+        f"## AWS cost estimate ({c.months} months, {c.region})",
+        "",
+        "_On-demand list prices from AWS's public price list (USD, ex. tax), applied to the volumes above. "
+        "Assumes every site is live from month 1, so it errs high for a phased roll-out._",
+        "",
+        _table(["", "Amount"], [[k, f"**{v}**" if i == 0 or k.startswith("Incl") else v]
+                                for i, (k, v) in enumerate(_cost_summary_rows(c, money))]),
+        "",
+        "**By year**",
+        "",
+        _table(["Year", "USD", "EUR"], [[f"Year {i + 1}", money(y), money(y * c.usd_to_eur, "EUR ")]
+                                         for i, y in enumerate(years)]),
+        "",
+        "**By category**",
+        "",
+        _table(["Category", "USD", "Share"], [[k, money(v), f"{v / c.total_usd * 100:.0f}%"] for k, v in cats.items()]),
+        "",
+        "**Line items**",
+        "",
+        _table(["Category", "Item", "Basis", "Avg/month", "Total"], line_rows),
+    ])
+
+
 def full_md(p: Params, r: Result, table=None, show_params: bool = True, show_formulas: bool = True) -> str:
     parts = ["# TRACE sizing report", ""]
     if show_params:
@@ -318,7 +362,8 @@ def full_md(p: Params, r: Result, table=None, show_params: bool = True, show_for
         lakehouse_md(r), "",
         storage_md(p, r), "",
         components_md(r), "",
-        fit_md(p, r),
+        fit_md(p, r), "",
+        cost_md(r),
     ]
     if show_formulas:
         parts += ["", formulas_md(p, r)]

@@ -224,6 +224,39 @@ def _components_section(r: Result) -> str:
     return _section("Component sizing", body, sid="components")
 
 
+def _cost_section(r: Result) -> str:
+    from .report import _cost_summary_rows
+    c = r.cost
+    money = lambda x, cur="$": f"{cur}{x:,.0f}"
+    summary = _cost_summary_rows(c, money)
+    summary_rows = [[_esc(k), f'<strong class="warn">{_esc(v)}</strong>' if v.startswith("OVER")
+                     else f"<strong>{_esc(v)}</strong>" if k.startswith(("Subtotal", "Incl")) else _esc(v)]
+                    for k, v in summary]
+    keys = ["subtotal-usd", "eur"] + (["after-discount"] if c.discount else []) + ["incl-vat"] \
+        + (["budget"] if c.budget_eur else [])
+    years = c.year_totals_usd()
+    cats = c.category_totals_usd()
+    body = (
+        _table(["", "Amount"], summary_rows, tid="cost--summary", keys=keys)
+        + _h3("By year", "cost", "by-year")
+        + _table(["Year", "USD", "EUR"], [[f"Year {i + 1}", money(y), money(y * c.usd_to_eur, "EUR ")]
+                                          for i, y in enumerate(years)],
+                 tid="cost--by-year", keys=[f"year-{i + 1}" for i in range(len(years))])
+        + _h3("By category", "cost", "by-category")
+        + _table(["Category", "USD", "Share"],
+                 [[_esc(k), money(v), f"{v / c.total_usd * 100:.0f}%"] for k, v in cats.items()],
+                 tid="cost--by-category")
+        + _h3("Line items", "cost", "lines")
+        + _table(["Category", "Item", "Basis", "Avg/month", "Total"],
+                 [[_esc(l.category), _esc(l.item), _esc(l.basis), money(l.total_usd / c.months),
+                   f"<strong>{money(l.total_usd)}</strong>"] for l in c.lines],
+                 tid="cost--lines", keys=[_slug(l.item.split("(")[0]) for l in c.lines])
+    )
+    return _section(f"AWS cost estimate ({c.months} months, {c.region})", body,
+                    "On-demand list prices from AWS's public price list (USD, ex. tax), applied to the volumes above. "
+                    "Assumes every site is live from month 1, so it errs high for a phased roll-out.", sid="cost")
+
+
 def _bar(pct: float) -> str:
     width = min(pct, 100)
     cls = "over" if pct > 100 else ""
@@ -396,6 +429,7 @@ def full_html(p: Params, r: Result, table=None, show_params: bool = True, show_f
     sections.append(_storage_section(p, r))
     sections.append(_components_section(r))
     sections.append(_fit_section(p, r))
+    sections.append(_cost_section(r))
     if show_formulas:
         sections.append(_formulas_section(p, r))
     if table:

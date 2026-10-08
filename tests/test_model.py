@@ -423,3 +423,64 @@ def test_html_ids_stable_when_values_change():
 def test_html_has_copy_link_script(r):
     out = full_html(Params(), r)
     assert '<div id="toast"' in out and "navigator.clipboard" in out
+
+
+def test_cost_vm_and_glue_lines(r):
+    c = r.cost
+    by_item = {l.item: l for l in c.lines}
+    assert c.region == "eu-west-1" and c.months == 36
+    assert by_item["VM portal (m7g.xlarge)"].total_usd == approx(0.1819 * 730 * 36)
+    glue = by_item["AWS Glue ETL"].total_usd
+    dpu_h = 2 * 730 * 2 * 3 / 60 + 1 * 365 / 12 * 2 * 10 / 60 + 480 * 260 / 365 * 365 / 12 * 30 / 4 / 3600
+    assert glue == approx(dpu_h * 0.44 * 36)
+
+
+def test_cost_storage_matches_integrated_volume(r):
+    # Deep Archive: HSI older than 365 days. Calendar-average HSI rate x days stored,
+    # integrated over the project, at $0.00099 per GB-month.
+    c = r.cost
+    da = next(l for l in c.lines if l.item == "S3 Glacier Deep Archive").total_usd
+    rate_gb = 96 * 260 / 365                          # GB/day
+    days = 36 * 365 / 12
+    gb_days = rate_gb * (days - 365) ** 2 / 2         # integral of rate x (t - 365)
+    assert da == approx(gb_days / (365 / 12) * 0.00099, rel=0.01)
+    assert all(m == 0 for m in next(l for l in c.lines if l.item == "S3 Glacier Deep Archive").monthly_usd[:12])
+
+
+def test_cost_totals_and_budget(r):
+    c = r.cost
+    assert c.total_usd == approx(sum(l.total_usd for l in c.lines))
+    assert c.total_incl_vat_eur == approx(c.total_usd * 0.87 * 1.23)
+    assert sum(c.year_totals_usd()) == approx(c.total_usd)
+
+
+def test_cost_region_and_overrides():
+    us = calculate(from_dict({"pricing": {"region": "us-east-1"}})).cost
+    eu = calculate(Params()).cost
+    assert us.total_usd < eu.total_usd                        # Ireland VMs/EBS cost more
+    cheap_glue = calculate(from_dict({"pricing": {"glue_dpu_hour_usd": 0.308}})).cost
+    g = lambda c: next(l for l in c.lines if l.item == "AWS Glue ETL").total_usd
+    assert g(cheap_glue) == approx(g(eu) * 0.308 / 0.44)
+    with pytest.raises(ValueError, match="region"):
+        calculate(from_dict({"pricing": {"region": "mars-1"}}))
+    with pytest.raises(ValueError, match="hourly_usd"):
+        calculate(from_dict({"vms": [{"name": "x", "instance_type": "z9.huge"}]}))
+
+
+def test_cost_retention_cap_cuts_storage_cost():
+    full = calculate(Params()).cost
+    capped = calculate(from_dict({"sizing": {"retention_months": 12}})).cost
+    s = lambda c: sum(l.total_usd for l in c.lines if l.category == "Storage")
+    assert s(capped) < s(full)
+    assert next(l for l in capped.lines if l.item == "S3 Glacier Deep Archive").total_usd == 0
+
+
+def test_cost_in_reports(r, capsys):
+    assert main(["--scale", "none", "--no-params"]) == 0
+    out = capsys.readouterr().out
+    assert "## AWS cost estimate (36 months, eu-west-1)" in out
+    html = full_html(Params(), r)
+    assert 'id="cost--summary--incl-vat"' in html and 'id="cost--lines--aws-glue-etl"' in html
+    assert main(["--format", "json", "--scale", "none"]) == 0
+    d = json.loads(capsys.readouterr().out)
+    assert d["result"]["cost"]["summary"]["total_usd"] == approx(r.cost.total_usd)

@@ -141,6 +141,11 @@ The 11 system parameters:
   Raw IoT sits in one tier for life (`iot_raw_tier`, default `glacier_ir`). Silver and Gold stay in
   Standard for the whole project, plus `silver_gold_overhead` (10%) for versioning and Iceberg
   snapshots. If `sizing.retention_months` is set, data older than that is deleted from every tier.
+- `[pricing]`: the AWS cost estimate over `sizing.project_months`. Pick the `region`
+  (`eu-west-1` or `us-east-1`); list prices for both are built into `src/trace_sizing/cost.py`,
+  checked against AWS's public price list, and any can be overridden here. Also sets the EUR
+  rate, discount (e.g. OCRE), VAT, the budget to compare against, fixed monthly allowances, and
+  the Glue job shape. VMs are priced by `instance_type` in `[[vms]]`, or set `hourly_usd`.
 - `[[vms]]`: the fleet to check against.
 - `[[extra_components]]`: CKAN, PostgreSQL, Solr, the CKAN Redis instance, MQTT, and anything
   else the model doesn't derive. Add measured figures here so they count toward the totals
